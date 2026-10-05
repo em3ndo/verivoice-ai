@@ -4,14 +4,20 @@ Python provider wiring for English (`en`), Hindi (`hi`), Spanish (`es`) and Russ
 
 ## Setup
 
-Requires Python 3.11 or newer.
+Uses the Conda environment `verivoiceai` (Python 3.11 or newer).
 
 ```sh
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python -m verivoice.check_setup
-.venv/bin/python -m unittest discover -s tests -v
+conda activate verivoiceai
+python -m pip install -r requirements.txt
+python -m verivoice.check_setup
+python -m unittest discover -s tests -v
 ```
+
+To recreate this environment on another machine, run `conda env create -f environment.yml`.
+For commands without activating it, use `conda run -n verivoiceai python ...`.
+The workspace editor is configured for your local Conda interpreter at
+`/opt/miniconda3/envs/verivoiceai/bin/python`; select `verivoiceai` manually if
+your editor already saved a different interpreter or Conda is installed elsewhere.
 
 Credentials live in `.env`, ignored by Git. `.env.example` documents the settings.
 Environment variables take precedence. Provider modules don't make calls on import.
