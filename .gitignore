@@ -1,0 +1,17 @@
+# Local credentials; publish only the blank configuration template.
+.env
+.env.*
+!.env.example
+
+# Python environments and generated files.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Temporary local work and macOS metadata.
+work/
+.DS_Store
