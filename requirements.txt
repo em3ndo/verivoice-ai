@@ -1,0 +1,5 @@
+httpx>=0.28,<0.29
+websockets>=15,<16
+python-dotenv>=1.1,<2
+certifi>=2025.1
+google-genai>=1.75,<2
