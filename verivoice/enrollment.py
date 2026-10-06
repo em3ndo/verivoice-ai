@@ -12,6 +12,7 @@ import sqlite3
 import time
 import wave
 from .providers.enrollment_api import EnrollmentError, LANGUAGES
+from .phone import normalize_phone
 
 MAX_AUDIO = 700000
 
@@ -52,6 +53,12 @@ class Accounts:
             CREATE TABLE IF NOT EXISTS sessions (
               token TEXT PRIMARY KEY, account TEXT NOT NULL, expires REAL NOT NULL);
             """)
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(accounts)")}
+            if "phone" not in columns:
+                db.execute("ALTER TABLE accounts ADD COLUMN phone TEXT")
+            if "phone_region" not in columns:
+                db.execute("ALTER TABLE accounts ADD COLUMN phone_region TEXT")
+            db.execute("CREATE UNIQUE INDEX IF NOT EXISTS accounts_phone ON accounts(phone)")
         os.chmod(self.path, 0o600)
 
     @contextmanager
@@ -85,7 +92,7 @@ class Accounts:
             raise EnrollmentError("Please sign in to continue.")
         return self.get(row[0])
 
-    def register(self, email, password, language, providers):
+    def register(self, email, password, language, providers, *, phone_region, phone_number):
         email = email.strip().casefold()
         if len(email) > 254 or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
             raise EnrollmentError("Enter a valid email address.")
@@ -93,9 +100,12 @@ class Accounts:
             raise EnrollmentError("Use a password between 12 and 128 characters.")
         if language not in LANGUAGES:
             raise EnrollmentError("Select English, Spanish, Hindi, or Russian.")
+        phone = normalize_phone(phone_region, phone_number)
         with self.connect() as db:
             if db.execute("SELECT 1 FROM accounts WHERE email=?", (email,)).fetchone():
                 raise EnrollmentError("Account already exists. Sign in to resume enrollment.")
+            if db.execute("SELECT 1 FROM accounts WHERE phone=?", (phone,)).fetchone():
+                raise EnrollmentError("This phone number is already associated with an account.")
         providers.ready()
         phrases = providers.phrases(language)
         uid = "vv-" + secrets.token_hex(12)
@@ -103,12 +113,12 @@ class Accounts:
         try:
             with self.connect() as db:
                 db.execute("""INSERT INTO accounts
-                  (id,email,password,language,phrases,hiya_owner,hiya_space,hiya_region)
-                  VALUES (?,?,?,?,?,?,?,?)""", (uid,email,password_hash(password),language,
+                  (id,email,password,language,phrases,hiya_owner,hiya_space,hiya_region,phone,phone_region)
+                  VALUES (?,?,?,?,?,?,?,?,?,?)""", (uid,email,password_hash(password),language,
                   json.dumps(phrases,ensure_ascii=False),settings.hiya_owner,
-                  settings.hiya_space,settings.hiya_region))
+                  settings.hiya_space,settings.hiya_region,phone,phone_region))
         except sqlite3.IntegrityError:
-            raise EnrollmentError("Account already exists. Sign in to continue.") from None
+            raise EnrollmentError("An account with this email or phone number already exists.") from None
         return self.session(uid)
 
     def login(self, email, password):
@@ -141,6 +151,7 @@ class Enrollment:
         audios = json.loads(account["audios"])
         phrases = json.loads(account["phrases"])
         return {"email": account["email"], "language": account["language"],
+                "phone": account["phone"], "phone_region": account["phone_region"],
                 "accepted": len(audios), "total": len(phrases), "state": account["state"],
                 "phrase": phrases[len(audios)] if len(audios) < len(phrases) else None,
                 "identity": account["id"] if account["state"] == "complete" else None,

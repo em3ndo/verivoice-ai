@@ -13,12 +13,17 @@ from pydantic import BaseModel, Field
 from .config import Settings, ConfigurationError, ROOT
 from .enrollment import Accounts, Enrollment, MAX_AUDIO
 from .providers.enrollment_api import EnrollmentProviders, EnrollmentError
+from .phone import calling_regions
 
 class Credentials(BaseModel):
     email: str = Field(max_length=254)
     password: str = Field(min_length=1, max_length=128)
     language: str = "en"
     consent: bool = False
+
+class Registration(Credentials):
+    phone_region: str = Field(min_length=2, max_length=2)
+    phone_number: str = Field(min_length=1, max_length=40)
 
 def create_app(*, settings=None, database=None, providers=None):
     settings = settings or Settings.from_env()
@@ -100,12 +105,17 @@ def create_app(*, settings=None, database=None, providers=None):
         return {"ready": not missing, "missing": missing}
 
     @app.post("/api/register")
-    def register(body: Credentials, request: Request):
+    def register(body: Registration, request: Request):
         with lock:
             throttle(request)
             if not body.consent:
                 raise EnrollmentError("Please agree to the enrollment data flow first.")
-            return respond(accounts.register(body.email, body.password, body.language, providers))
+            return respond(accounts.register(body.email, body.password, body.language, providers,
+                phone_region=body.phone_region, phone_number=body.phone_number))
+
+    @app.get("/api/calling-codes")
+    def countries():
+        return calling_regions()
 
     @app.post("/api/login")
     def login(body: Credentials, request: Request):

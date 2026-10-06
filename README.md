@@ -56,8 +56,10 @@ Those two environment fields remain useful for standalone matching examples.
 
 ## Enrollment flow
 
-1. Enter an email, a password of 12–128 characters, select a language and consent
-   to the displayed data flow. Email ownership is not verified in this prototype.
+1. Enter an email, a password of 12–128 characters, a country calling code and
+   national phone number, select a language and consent to the displayed data flow.
+   Numbers are validated and stored in E.164 format (for example, `+12025550123`),
+   with one account per number. Email and phone ownership are not verified.
 2. Gemini creates five distinct sentences in the selected language, targeting
    8–15 seconds each and varied sounds, rhythm and sentence structures. These are
    generated prompts, not a validated phonetic coverage corpus.
@@ -85,7 +87,7 @@ pending enrollment; automatic cleanup/re-enrollment is not implemented yet.
 
 ## Storage and limitations
 
-- VeriVoice stores email, salted scrypt password hashes, selected language, generated
+- VeriVoice stores email, phone number and selected country, salted scrypt password hashes, selected language, generated
   phrases, Hiya references and hashed session tokens in `data/accounts.sqlite3`.
   The private directory is Git-ignored; raw recordings and transcripts are not
   written to this database or local audio files. Sessions expire after 12 hours.

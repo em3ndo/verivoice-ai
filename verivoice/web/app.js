@@ -10,6 +10,7 @@ async function api(path, body, raw=false) {
 }
 function render(data) {
  current=data; $("account").hidden=true; $("enrollment").hidden=false;
+ $("account-phone").textContent=data.phone ? `Account phone: ${data.phone}` : "";
  $("progress").textContent=`${data.accepted} of ${data.total} sentences accepted`;
  $("meter").value=data.accepted; $("phrase").textContent=data.phrase || "";
  $("phrase").lang=data.language; $("record-panel").hidden=!data.phrase;
@@ -23,7 +24,7 @@ async function run(task) {
  try { await task(); } catch(e) {status(e.message,true);}
  finally {buttons.forEach((b,i)=>b.disabled=states[i]);busy=false;}
 }
-function credentials(){return {email:$("email").value,password:$("password").value,language:$("language").value,consent:$("consent").checked};}
+function credentials(){return {email:$("email").value,password:$("password").value,language:$("language").value,consent:$("consent").checked,phone_region:$("phone-region").value,phone_number:$("phone-number").value};}
 $("account-form").onsubmit=e=>{e.preventDefault();if(setupState && !setupState.ready){status("Account setup is unavailable until the backend configuration listed above is completed.",true);return;}run(async()=>{status("Creating your phrases…");render(await api("/api/register",credentials()));$("password").value="";status("Ready for your first recording.");});};
 $("login").onclick=()=>run(async()=>{render(await api("/api/login",credentials()));$("password").value="";status("Your saved progress is ready.");});
 $("logout").onclick=()=>run(async()=>{cleanup();await api("/api/logout",{});location.reload();});
@@ -60,4 +61,15 @@ function stopRecording(){
 $("stop").onclick=stopRecording;
 $("finish").onclick=()=>run(async()=>{status("Computing and confirming your Hiya voiceprint…");render(await api("/api/finish",{}));status("Enrollment complete.");});
 window.addEventListener("pagehide",cleanup);
+async function loadCallingCodes() {
+ try {
+  const regions=await api("/api/calling-codes");
+  const names=typeof Intl.DisplayNames === "function" ? new Intl.DisplayNames(["en"],{type:"region"}) : null;
+  const options=regions.map(item=>({...item,name:names ? names.of(item.region) : item.region}));
+  options.sort((a,b)=>a.name.localeCompare(b.name));
+  $("phone-region").replaceChildren(...options.map(item=>new Option(`${item.name} (${item.code})`,item.region)));
+  $("phone-region").value="US";
+ } catch(e) {status("Country calling codes could not be loaded. Reload the page to try again.",true);}
+}
+loadCallingCodes();
 (async()=>{try {const s=await api("/api/setup");setupState=s;if(!s.ready){$("configuration").hidden=false;$("configuration").textContent=`Backend setup needed: set ${s.missing.join(", ")} in .env and restart the server.`;}try{render(await api("/api/me"));}catch{}}catch(e){status(e.message,true);}})();

@@ -2,6 +2,7 @@ import io
 import json
 from pathlib import Path
 import tempfile
+import sqlite3
 import unittest
 from unittest.mock import patch
 import wave
@@ -56,7 +57,7 @@ class EnrollmentTests(unittest.TestCase):
         self.client = TestClient(create_app(settings=self.providers.settings,
             database=self.db, providers=self.providers), raise_server_exceptions=False)
         self.headers = {"X-Verivoice": "enrollment"}
-        self.details = {"email": "person@example.com", "password": "a long test password", "language": "en", "consent": True}
+        self.details = {"email": "person@example.com", "password": "a long test password", "language": "en", "consent": True, "phone_region": "US", "phone_number": "2025550123"}
     def tearDown(self):
         self.client.close(); self.temp.cleanup()
     def post(self, path, **kwargs):
@@ -123,6 +124,7 @@ class EnrollmentTests(unittest.TestCase):
         self.register(); self.record(0)
         self.post("/api/logout", json={})
         self.details["email"] = "other@example.com"
+        self.details["phone_number"] = "2025550124"
         self.register()
         self.assertEqual(self.client.get("/api/me").json()["accepted"], 0)
         self.assertEqual(self.post("/api/finish", json={}).status_code, 400)
@@ -142,6 +144,7 @@ class EnrollmentTests(unittest.TestCase):
         for code in ["en", "es", "hi", "ru"]:
             self.details["email"] = code+"@example.com"
             self.details["language"] = code
+            self.details["phone_number"] = "202555012" + str(["en", "es", "hi", "ru"].index(code))
             self.assertEqual(self.register().json()["language"], code)
         self.details["language"] = "zh"
         self.details["email"] = "new@example.com"
@@ -151,6 +154,48 @@ class EnrollmentTests(unittest.TestCase):
         self.assertEqual(validate_audio(wav()), 6)
         for data in [b"bad", wav(2), wav(21), wav()[:-10]]:
             with self.assertRaises(EnrollmentError): validate_audio(data)
+
+    def test_phone_normalization_uniqueness_and_login_without_phone(self):
+        self.details["phone_number"] = "(202) 555-0123"
+        self.assertEqual(self.register().json()["phone"], "+12025550123")
+        self.post("/api/logout", json={})
+        self.details["email"] = "duplicate@example.com"
+        self.assertEqual(self.post("/api/register", json=self.details).status_code, 400)
+        self.assertEqual(self.providers.uploads, 0)
+        response = self.post("/api/login", json={"email": "person@example.com",
+            "password": self.details["password"]})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["phone"], "+12025550123")
+
+    def test_phone_validation_before_provider_requests(self):
+        for region, number in [("ZZ", "2025550123"), ("US", "123"),
+                               ("US", "+12025550123"), ("US", "2025550123 ext 2")]:
+            with self.subTest(region=region, number=number):
+                self.details.update(phone_region=region, phone_number=number)
+                with patch.object(self.providers, "phrases") as phrases:
+                    self.assertEqual(self.post("/api/register", json=self.details).status_code, 400)
+                    phrases.assert_not_called()
+        self.details.pop("phone_number")
+        self.assertEqual(self.post("/api/register", json=self.details).status_code, 422)
+
+    def test_calling_codes_and_international_number(self):
+        codes = self.client.get("/api/calling-codes").json()
+        self.assertGreater(len(codes), 200)
+        self.assertIn({"region": "US", "code": "+1"}, codes)
+        self.assertIn({"region": "GB", "code": "+44"}, codes)
+        self.details.update(phone_region="GB", phone_number="020 7946 0018")
+        self.assertEqual(self.register().json()["phone"], "+442079460018")
+
+    def test_existing_database_migration_preserves_accounts(self):
+        legacy = Path(self.temp.name) / "legacy.sqlite3"
+        with sqlite3.connect(legacy) as db:
+            db.execute("CREATE TABLE accounts (id TEXT PRIMARY KEY, email TEXT)")
+            db.execute("INSERT INTO accounts VALUES ('existing', 'existing@example.com')")
+        db.close()
+        accounts = Accounts(legacy)
+        self.assertEqual(accounts.get("existing")["email"], "existing@example.com")
+        self.assertIsNone(accounts.get("existing")["phone"])
+        Accounts(legacy)  # The migration can run again without resetting stored data.
 
     def test_missing_configuration_visible_without_secret(self):
         with TestClient(create_app(settings=Settings(), database=Path(self.temp.name)/"blank.sqlite")) as client:
