@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlencode
 import ssl
+import httpx
+from .enrollment_common import EnrollmentError
 import certifi
 import websockets
 from websockets.exceptions import ConnectionClosedOK
@@ -71,3 +73,15 @@ class DeepgramAPI:
                     yield message
             except ConnectionClosedOK:
                 return
+
+    def transcribe(self, wav):
+        with httpx.Client(timeout=60) as client:
+            response = client.post("https://api.deepgram.com/v1/listen",
+                params={"model": "nova-3-general", "detect_language": "true",
+                        "mip_opt_out": "true", "smart_format": "true"},
+                headers={"Authorization": "Token " + self.settings.deepgram_api_key,
+                         "Content-Type": "audio/wav"}, content=wav)
+        if response.is_error:
+            raise EnrollmentError(f"Deepgram request failed (HTTP {response.status_code}). Check the key and quota.")
+        channel = response.json()["results"]["channels"][0]
+        return channel["alternatives"][0]["transcript"], channel.get("detected_language")

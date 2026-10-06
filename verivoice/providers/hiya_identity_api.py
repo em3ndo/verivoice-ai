@@ -34,6 +34,9 @@ class HiyaIdentityAPI:
         data = self.client.request("GET", self.client.space_path + "/verifications/identity/" + segment(verification_handle))
         return IdentityResult.from_response(data)
 
-    def enroll(self, *args, **kwargs):
-        """Explicit stub: enrollment UI/identity and voiceprint creation come next."""
-        raise NotImplementedError("Enrollment needs verified audio and an identity/voiceprint setup flow. Configure existing HIYA_IDENTITY and HIYA_VOICEPRINT for now.")
+    def enroll(self, identity, checked_audio_handles):
+        """Compute a voiceprint from five samples already screened by enrollment policy."""
+        from .hiya_enrollment_api import HiyaEnrollmentAPI
+        if len(checked_audio_handles) != 5 or len(set(checked_audio_handles)) != 5:
+            raise ValueError("Enrollment requires five distinct verified samples.")
+        return HiyaEnrollmentAPI(self.client.settings).finish(identity, checked_audio_handles)

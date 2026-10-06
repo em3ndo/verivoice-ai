@@ -8,8 +8,11 @@ def main():
     print("Hiya key:", "configured" if settings.hiya_api_key else "missing")
     print("Gemini key:", "configured" if settings.gemini_api_key else "missing")
     print("Gemini model:", settings.gemini_model)
-    for name in ("hiya_region", "hiya_owner", "hiya_space", "hiya_identity", "hiya_voiceprint"):
+    print("Gemini enrollment model:", settings.gemini_enrollment_model)
+    for name in ("hiya_region", "hiya_owner", "hiya_space"):
         print(name.upper() + ":", "configured" if getattr(settings, name) else "needed")
+
+    print("HIYA_IDENTITY / HIYA_VOICEPRINT: optional; enrollment creates per-account resources.")
 
 if __name__ == "__main__":
     main()

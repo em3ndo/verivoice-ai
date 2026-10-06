@@ -23,6 +23,8 @@ class Settings:
     gemini_api_key: str = field(default="", repr=False)
     gemini_model: str = "gemini-3.8-live"
 
+    gemini_enrollment_model: str = "gemini-3.8-flash"
+
     @classmethod
     def from_env(cls):
         load_dotenv(ROOT / ".env", override=False)

@@ -1,131 +1,151 @@
 # VeriVoice AI
 
-Python provider wiring for English (`en`), Hindi (`hi`), Spanish (`es`) and Russian (`ru`).
+Python account enrollment and voice verification integrations for English (`en`),
+Spanish (`es`), Hindi (`hi`) and Russian (`ru`).
 
-## Setup
+## Run the enrollment website
 
-Uses the Conda environment `verivoiceai` (Python 3.11 or newer).
+A local `.venv` is installed. From this project folder:
+
+```sh
+.venv/bin/python -m verivoice.app
+```
+
+Open http://127.0.0.1:8000 in Chrome, Edge or another browser supporting microphone
+capture at 16 kHz. The server binds only to your computer. Stop with Ctrl+C.
+If the server was already running, restart it after editing `.env` or Python files.
+
+Alternatively, use the existing Conda environment:
 
 ```sh
 conda activate verivoiceai
 python -m pip install -r requirements.txt
-python -m verivoice.check_setup
-python -m unittest discover -s tests -v
+python -m verivoice.app
 ```
 
-To recreate this environment on another machine, run `conda env create -f environment.yml`.
-For commands without activating it, use `conda run -n verivoiceai python ...`.
-The workspace editor is configured for your local Conda interpreter at
-`/opt/miniconda3/envs/verivoiceai/bin/python`; select `verivoiceai` manually if
-your editor already saved a different interpreter or Conda is installed elsewhere.
+For a fresh virtual environment:
 
-Credentials live in `.env`, ignored by Git. `.env.example` documents the settings.
-Environment variables take precedence. Provider modules don't make calls on import.
-Do not send these credentials to a browser or include `.env` in a deployment bundle.
-
-## Separate model integrations
-
-- `verivoice/providers/deepgram_api.py`: Flux Multilingual streaming transcription and
-  per-turn language observations. Uses `/v2/listen`, `flux-general-multi`, and repeated
-  `language_hint=en&language_hint=hi&language_hint=es&language_hint=ru` query parameters.
-- `verivoice/providers/hiya_identity_api.py`: match uploaded speech against an existing
-  enrolled identity and voiceprint. Enrollment is an explicit stub.
-- `verivoice/providers/hiya_synthesis_api.py`: synthetic-voice verification, both uploaded
-  audio and streaming media. A high Hiya synthesis score means **non-synthetic**.
-- `verivoice/providers/hiya_client.py`: shared authentication, media upload and HTTP transport.
-
-The adapters use the providers' documented HTTP/WebSocket APIs directly through `httpx`
-and `websockets`. No heavyweight models are downloaded, and no training is required.
-
-## Flux language detection
-
-Flux **Multilingual** reports detected languages through `TurnInfo.languages`.
-`flux-general-en` is English-only. The supplied shell example used English-only Nova-3
-on `/v1/listen`, so it isn't a Flux multilingual example. Hints bias recognition, rather
-than implementing a strict allowlist. Evaluate `EndOfTurn` once per `turn_index`; don't
-count interim updates as independent observations. Missing language information remains
-unknown. Word confidence and end-of-turn confidence are not language confidence.
-
-Usage in a Python backend:
-
-```python
-from verivoice.providers.deepgram_api import DeepgramAPI, LanguageObservation
-
-async def analyze_microphone(pcm_chunks):
-    # pcm_chunks: async iterable of mono, signed 16-bit little-endian PCM bytes at 16 kHz.
-    async for event in DeepgramAPI().stream(pcm_chunks):
-        observation = LanguageObservation.from_message(event)
-        if observation and observation.event == "EndOfTurn":
-            print(observation.transcript, observation.languages)
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
 ```
 
-Start with 80 ms PCM chunks (2,560 bytes at 16 kHz). Browser capture must convert audio
-into this format; passing compressed WebM bytes or WAV headers as raw PCM is incorrect.
-Require sustained language evidence in a future policy instead of penalizing one short,
-ambiguous utterance. No confidence-scoring engine is implemented yet.
+## Required configuration
 
-## Hiya configuration and use
+Fill the ignored `.env` locally, using `.env.example` as the template:
 
-Fill `HIYA_REGION` with the account region (`us` or `eu`) and set `HIYA_OWNER` and
-`HIYA_SPACE` from the Audio Intelligence console. The supplied key must be a valid
-Audio Intelligence bearer token, with permissions for the desired endpoints; this is
-not established by its name or format. Speaker matching additionally requires
-`HIYA_IDENTITY` and `HIYA_VOICEPRINT` for an enrolled speaker. Values are placeholders
-until account access and enrollment are confirmed.
+- `GEMINI_API_KEY`, `DEEPGRAM_API_KEY`, `HIYA_API_KEY`.
+- `HIYA_REGION=us` (or your actual region), `HIYA_OWNER` (user/organization handle),
+  and `HIYA_SPACE=main` (your existing space).
+- `GEMINI_ENROLLMENT_MODEL=gemini-3.8-flash` is the text model for enrollment.
+  `GEMINI_MODEL` remains separate for the existing Live speaker adapter.
 
-```python
-from verivoice.providers.hiya_client import HiyaClient
-from verivoice.providers.hiya_identity_api import HiyaIdentityAPI
-from verivoice.providers.hiya_synthesis_api import HiyaSynthesisAPI
+The checkout did not contain `.env`; a blank private copy has been created.
+No old credentials are assumed valid. Keys stay exclusively on the backend.
+Environment variables override `.env`. The website lists missing configuration
+without exposing values. Your key must allow Hiya audio uploads, authenticity
+verification, identities and voiceprints; credentials alone do not prove access.
 
-with HiyaClient() as client:
-    audio = client.upload_audio("sample.wav")  # Explicit upload to the selected Hiya space.
-    synthesis = HiyaSynthesisAPI(client).verify(audio["handle"])
-    identity = HiyaIdentityAPI(client).verify(audio["handle"])
-    print(synthesis.non_synthetic_score, identity.match_score)
+`HIYA_IDENTITY` and `HIYA_VOICEPRINT` are optional for enrollment. Each account
+receives its own generated identity and a `main` voiceprint, persisted in SQLite.
+Those two environment fields remain useful for standalone matching examples.
+
+```sh
+.venv/bin/python -m verivoice.check_setup
 ```
 
-If a verification is not `performed`, its normalized score remains `None`; retrieve the
-result using `get_result()` when the provider finishes processing. Errors are not scores.
+## Enrollment flow
 
-For streaming synthetic detection, `HiyaSynthesisAPI.stream()` accepts an async iterable
-of chunks from a decodable media stream, such as WAV. It does not assume Hiya can decode
-bare headerless PCM. The browser audio encoder and fan-out to both providers are still to
-be built. Choose `digital` for browser audio (16 kHz+), `phone` for telephone audio (8 kHz+).
+1. Enter an email, a password of 12–128 characters, select a language and consent
+   to the displayed data flow. Email ownership is not verified in this prototype.
+2. Gemini creates five distinct sentences in the selected language, targeting
+   8–15 seconds each and varied sounds, rhythm and sentence structures. These are
+   generated prompts, not a validated phonetic coverage corpus.
+3. Record each sentence naturally. The browser captures mono PCM16 WAV at 16 kHz;
+   the server requires 5–20 seconds per clip and a bounded upload size.
+4. Deepgram's recorded-audio endpoint (`nova-3-general`, `detect_language=true`,
+   `mip_opt_out=true`) returns the transcript and dominant language. Unlike live
+   conversation, enrollment does not need Flux streaming. The existing Flux
+   adapter remains available for future live calls.
+5. The detected language must match, Gemini must accept the words as a faithful
+   reading, and Hiya must return a performed non-synthetic score of at least 0.5.
+   Missing results and provider failures never count as acceptance. This threshold
+   is a prototype choice requiring evaluation, not proof of liveness.
+6. After five accepted clips, press **Finish voice enrollment**. The backend creates
+   the identity and `digital/v1` voiceprint with `minAudios=5`, adds the clips, computes
+   the voiceprint, and reads it back. Success requires Hiya state `computed` and five
+   attached audios. Uploading alone never completes enrollment.
 
-Synthetic detection is not replay detection. The currently documented Hiya score is
-non-synthetic confidence, not proof of freshness. Fresh randomized challenges and phrase
-verification are future work. Evaluate genuine Hindi/Russian voices separately, because
-Hiya's model descriptions emphasize English and Spanish training data.
+Progress persists after each accepted clip. Sign in to resume. A failed finalization
+can be retried; the backend inspects existing Hiya resources before adding clips.
+Recordings rejected after upload may remain in Hiya until its configured retention
+expires. An interrupted upload may also leave an unattached audio resource.
+If a stored audio expires before you finish, an operator must repair/restart that
+pending enrollment; automatic cleanup/re-enrollment is not implemented yet.
 
-## Next layers
+## Storage and limitations
 
-The browser demo will need HTML/CSS plus JavaScript (or TypeScript) for microphone
-permission, audio capture, playback and the dashboard. Python can handle provider calls,
-scoring, state and access controls. Neither Twilio nor another phone platform is required
-for a browser simulation. A single conversational speaker agent will be connected later.
+- VeriVoice stores email, salted scrypt password hashes, selected language, generated
+  phrases, Hiya references and hashed session tokens in `data/accounts.sqlite3`.
+  The private directory is Git-ignored; raw recordings and transcripts are not
+  written to this database or local audio files. Sessions expire after 12 hours.
+- Hiya stores uploaded audio (default 90 days, configurable by space) and the computed
+  biometric voiceprint. Audio retention and voiceprint persistence are distinct.
+- Deepgram receives recordings with model-improvement opt-out. Its docs state these
+  requests retain data only for the duration needed to process them.
+- Gemini receives the language, phrases and transcripts, never audio, account email,
+  password or Hiya IDs. Free-tier input/output can be used for improvement and
+  human review. Unexpected personal speech may appear in a transcript; only read
+  the displayed nonpersonal sentences.
 
-## References
+All account and verification logic is Python. Small HTML/CSS/JavaScript files handle
+browser display and microphone access. This is a local, single-worker demo, not a
+public authentication service. It has no email confirmation, password recovery,
+third-party relying-party integration, or production identity proofing.
+One enrollment does not automatically grant access to companies or government systems.
+Voiceprints are scoped to the configured Hiya space; future relying parties would
+need authorized integration through VeriVoice.
 
-- [Flux API](https://developers.deepgram.com/reference/speech-to-text/listen-flux)
-- [Flux multilingual output](https://deepgram.com/learn/flux-multilingual-technical-deep-dive)
-- [Hiya authentication](https://developer.hiya.com/docs/guides/voice-protection/authentication/authenticate-using-api-keys)
-- [Hiya identity verification](https://developer.hiya.com/docs/guides/voice-protection/results/perform-a-verification/identity)
-- [Hiya authenticity streaming](https://developer.hiya.com/docs/audio-intel/endpoints/authenticity-verifications-streaming)
-- [Hiya score interpretation](https://developer.hiya.com/docs/audio-intel/scores)
+Hiya synthetic detection does not establish that speech is live or defeat replay.
+Five phrases are not proof of a person's legal identity, nor a calibrated guarantee
+that all clips come from the same speaker. Evaluate enrollment quality and genuine
+Hindi/Russian voice matching; Hiya documents substantial English/Spanish training data.
 
-## Validation completed
+## Modules and verification
 
-- Seven offline tests passed: language configuration, unknown evidence, score direction,
-  correct identity request, protected error messages, duplex streaming and timeout cleanup.
-- Deepgram accepted a Flux Multilingual WebSocket connection with all four language hints.
-- Hiya's US `/user` endpoint accepted the supplied token; US is configured locally.
-- No voice recordings were uploaded. Language recognition, identity matching, synthesis
-  detection accuracy and endpoint-specific permissions have not yet been tested with audio.
+- `verivoice/app.py`: local FastAPI server, session cookies and bounded requests.
+- `verivoice/enrollment.py`: SQLite accounts, passwords and acceptance policy.
+- `verivoice/providers/gemini_enrollment_api.py`: text-only phrase generation/checking.
+- `verivoice/providers/deepgram_api.py`: recorded transcription and existing Flux streaming.
+- `verivoice/providers/hiya_enrollment_api.py`: audio screening and voiceprint computation.
+- `verivoice/providers/hiya_identity_api.py`: future identity matching against enrolled profiles.
+- `verivoice/providers/hiya_synthesis_api.py`: uploaded/streaming synthetic detection.
+- `verivoice/providers/enrollment_api.py`: composes the three enrollment adapters.
+
+```sh
+.venv/bin/python -m unittest discover -s tests -v
+```
+
+Tests use simulated provider responses; they cover account isolation, password/session
+handling, language/phrase/synthesis rejection, duplicate recordings, unfinished
+voiceprints, retry behavior and provider request formats. Live enrollment must still
+be validated with configured credentials and actual user speech. No account or
+voiceprint was created in Hiya during automated testing.
+
+## Provider references
+
+- [Hiya voiceprint computation](https://developer.hiya.com/docs/guides/voice-protection/results/compute-a-voiceprint)
+- [Hiya create endpoint](https://developer.hiya.com/docs/audio-intel/endpoints/voiceprints-create)
+- [Hiya model requirements](https://developer.hiya.com/docs/audio-intel/model-index/voiceprint-models)
+- [Hiya audio retention](https://developer.hiya.com/docs/guides/voice-protection/use-cases/identity-verification/identity-best-practices)
+- [Deepgram language detection](https://developers.deepgram.com/docs/language-detection)
+- [Deepgram opt-out](https://developers.deepgram.com/docs/the-deepgram-model-improvement-partnership-program)
+- [Gemini terms](https://ai.google.dev/gemini-api/terms)
+
 # Gemini conversational speaker
 
 `verivoice/providers/gemini_speaker_api.py` uses Google's `google-genai` SDK
-and Gemini Live. The key is in the ignored backend `.env`; never send it to a
+and Gemini Live. Configure the key in the ignored backend `.env`; never send it to a
 browser. `GEMINI_MODEL` defaults to `gemini-3.8-live` and can be changed there.
 
 The speaker accepts microphone audio **or** finalized Deepgram transcripts,
