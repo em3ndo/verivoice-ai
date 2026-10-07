@@ -23,7 +23,7 @@ class VoiceprintLearning:
               audio TEXT NOT NULL, verification TEXT NOT NULL, source_voiceprint TEXT NOT NULL,
               identity_score REAL NOT NULL, synthesis_score REAL NOT NULL, replay_score REAL NOT NULL,
               seconds REAL NOT NULL, voice_seconds REAL NOT NULL, created REAL NOT NULL,
-              language_score REAL NOT NULL DEFAULT 1,
+              language_score REAL NOT NULL,
               UNIQUE(account,audio));
             CREATE TABLE IF NOT EXISTS voiceprint_versions (
               account TEXT NOT NULL, handle TEXT NOT NULL, previous TEXT NOT NULL,
@@ -33,13 +33,13 @@ class VoiceprintLearning:
             """)
             columns = {row['name'] for row in db.execute("PRAGMA table_info(voiceprint_samples)")}
             if 'language_score' not in columns:
-                db.execute("ALTER TABLE voiceprint_samples ADD COLUMN language_score REAL NOT NULL DEFAULT 1")
+                db.execute("ALTER TABLE voiceprint_samples ADD COLUMN language_score REAL")
             if 'is_security_phrase' not in columns:
                 db.execute("ALTER TABLE voiceprint_samples ADD COLUMN is_security_phrase INTEGER NOT NULL DEFAULT 0")
             db.execute("""CREATE UNIQUE INDEX IF NOT EXISTS one_security_phrase_per_account
                 ON voiceprint_samples(account) WHERE is_security_phrase=1""")
 
-    def accept(self, account, scores, *, language_score=1.0, is_security_phrase=False):
+    def accept(self, account, scores, *, language_score=None, is_security_phrase=False):
         values = [optional_score(value) for value in (scores.identity, scores.synthesis, scores.replay, language_score)]
         if any(value is None or value < TRAINING_THRESHOLD for value in values):
             return False

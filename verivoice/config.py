@@ -13,6 +13,8 @@ class ConfigurationError(ValueError):
 @dataclass(frozen=True)
 class Settings:
     deepgram_api_key: str = field(default="", repr=False)
+    soniox_api_key: str = field(default="", repr=False)
+    soniox_model: str = "stt-rt-v5"
     hiya_api_key: str = field(default="", repr=False)
     hiya_region: str = ""
     hiya_owner: str = ""

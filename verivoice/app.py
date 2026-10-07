@@ -27,12 +27,12 @@ class Registration(Credentials):
     phone_region: str = Field(min_length=2, max_length=2)
     phone_number: str = Field(min_length=1, max_length=40)
 
-def create_app(*, settings=None, database=None, providers=None, call_speaker=None, call_identity=None):
+def create_app(*, settings=None, database=None, providers=None, call_speaker=None, call_identity=None, call_language=None):
     settings = settings or Settings.from_env()
     providers = providers or EnrollmentProviders(settings)
     accounts = Accounts(database or ROOT / "data" / "accounts.sqlite3")
     enrollment = Enrollment(accounts, providers)
-    calls = CallService(accounts, settings, speaker=call_speaker, identity=call_identity)
+    calls = CallService(accounts, settings, speaker=call_speaker, identity=call_identity, language=call_language)
     # Serializes operations in this local single-worker demo, including login and retries.
     lock = threading.Lock()
     attempts = defaultdict(deque)
@@ -120,7 +120,7 @@ def create_app(*, settings=None, database=None, providers=None, call_speaker=Non
 
     @app.get("/api/setup")
     def setup():
-        names = ["gemini_api_key", "deepgram_api_key", "hiya_api_key", "hiya_region", "hiya_owner", "hiya_space"]
+        names = ["gemini_api_key", "deepgram_api_key", "soniox_api_key", "hiya_api_key", "hiya_region", "hiya_owner", "hiya_space"]
         missing = [name.upper() for name in names if not getattr(settings, name)]
         return {"ready": not missing, "missing": missing}
 

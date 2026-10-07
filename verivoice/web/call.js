@@ -127,11 +127,11 @@ async function handle(data){
  case "listening":setStatus("Repeat the phrase to verify your voice.");break;
  case "microphone_received":$("capture-status").textContent="Microphone audio received by VeriVoice.";break;
  case "verification_waiting":setStatus(data.message);break;
- case "verification_started":setStatus("Sending your recording to Hiya and checking your voice…");break;
+ case "verification_started":setStatus("Sending your recording to Hiya and Soniox to check your voice and language…");break;
  case "verification_retry":setStatus(data.message);break;
  case "verified":setStatus("Voice verified. What would you like to talk about?");break;
  case "interrupted": clearPlayback();break;
- case "confidence": $("confidence").textContent=data.c===null?"Waiting for voice evidence":`Voice confidence: ${data.c.toFixed(2)} · Identity: ${data.ca.toFixed(2)} · Authenticity: ${data.ch.toFixed(2)}`;break;
+ case "confidence": $("confidence").textContent=data.c===null?"Waiting for voice evidence":`Voice confidence: ${data.c.toFixed(2)} · Identity: ${data.ca.toFixed(2)} · Authenticity: ${data.ch.toFixed(2)} · Language: ${data.cl == null ? "—" : data.cl.toFixed(2)}`;break;
  case "warning": bubble(data.message);break;
  case "removed":
   clearInterval(introTimer);stopMedia();bubble(data.message,true);setStatus("Call ended.");

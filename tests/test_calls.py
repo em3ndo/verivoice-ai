@@ -27,11 +27,11 @@ class ConfidenceTests(unittest.TestCase):
     def test_human_ema_uses_minimum_of_adjusted_synthesis_and_replay(self):
         state=Confidence()
         self.assertIsNone(state.ch)
-        report=state.update(.96,.94,.86)
+        report=state.update(.96,.94,.86, 1)
         self.assertEqual(report['h'],.86)
         self.assertEqual(report['ch'],.86)
         self.assertEqual(report['c'],.86)
-        report=state.update(.98,.9,.4)
+        report=state.update(.98,.9,.4, 1)
         self.assertAlmostEqual(report['ca'],.97)
         self.assertAlmostEqual(report['ch'],.63)
         self.assertEqual(report['action'],'revoke')
@@ -40,36 +40,36 @@ class ConfidenceTests(unittest.TestCase):
     def test_synthesis_adjustment_preserves_raw_scores_and_does_not_compound(self):
         state=Confidence()
         for _ in range(2):
-            report=state.update(.95,.6,.9)
+            report=state.update(.95,.6,.9, 1)
             self.assertEqual(report['s'],.6)
             self.assertEqual(report['r'],.9)
             self.assertAlmostEqual(report['s_adjusted'],.8)
             self.assertAlmostEqual(report['h'],.8)
             self.assertAlmostEqual(report['ch'],.8)
         for synthesis, expected in [(0,.5),(1,1)]:
-            report=Confidence().update(1,synthesis,1)
+            report=Confidence().update(1,synthesis,1, 1)
             self.assertEqual(report['s_adjusted'],expected)
             self.assertEqual(report['h'],expected)
 
     def test_incomplete_or_invalid_authenticity_never_updates_ema(self):
         state=Confidence()
-        self.assertIsNone(state.update(.99,.99,None)['c'])
-        state.update(.9,.9,.9)
+        self.assertIsNone(state.update(.99,.99,None, 1)['c'])
+        state.update(.9,.9,.9, 1)
         previous=state.snapshot()
-        self.assertEqual(state.update(.1,None,.1),previous)
-        with self.assertRaises(ValueError):state.update(.1,.1,float('nan'))
+        self.assertEqual(state.update(.1,None,.1, 1),previous)
+        with self.assertRaises(ValueError):state.update(.1,.1,float('nan'), 1)
         self.assertEqual(state.snapshot(),previous)
 
     def test_ema_thresholds_and_warning_cadence(self):
         state = Confidence()
         self.assertIsNone(state.c)
         self.assertIsNone(state.notification(0))
-        self.assertEqual(state.update(.9, 1, 1)["c"], .9)
-        self.assertEqual(state.update(.6, 1, 1)["c"], .75)
+        self.assertEqual(state.update(.9, 1, 1, 1)["c"], .9)
+        self.assertEqual(state.update(.6, 1, 1, 1)["c"], .75)
         self.assertEqual(state.notification(0)["type"], "warning")
         self.assertIsNone(state.notification(9.99))
         self.assertEqual(state.notification(10)["type"], "warning")
-        self.assertEqual(state.update(.5, 1, 1)["c"], .625)
+        self.assertEqual(state.update(.5, 1, 1, 1)["c"], .625)
         self.assertEqual(state.notification(11)["message"], REMOVAL)
         self.assertIsNone(state.notification(12))
         self.assertEqual(state.ch, 1)
@@ -77,13 +77,13 @@ class ConfidenceTests(unittest.TestCase):
 
     def test_boundaries_missing_and_invalid_scores(self):
         state = Confidence()
-        self.assertEqual(state.update(None, 1, 1)["action"], "pending")
+        self.assertEqual(state.update(None, 1, 1, 1)["action"], "pending")
         for score, action in [(.8,"allow"), (.7,"pending"), (.699,"revoke"), (.799,"warn")]:
-            self.assertEqual(Confidence().update(score, 1, 1)["action"],action)
-        state.update(.7, 1, 1)
-        self.assertEqual(state.update(None, 1, 1)["c"], .7)
+            self.assertEqual(Confidence().update(score, 1, 1, 1)["action"],action)
+        state.update(.7, 1, 1, 1)
+        self.assertEqual(state.update(None, 1, 1, 1)["c"], .7)
         for invalid in [float("nan"), float("inf"), -1, 2, True]:
-            with self.assertRaises(ValueError):state.update(invalid, 1, 1)
+            with self.assertRaises(ValueError):state.update(invalid, 1, 1, 1)
 
     def test_quiet_filter_and_wav_format(self):
         pcm = struct.pack('<h', 8000)*64000
@@ -166,12 +166,21 @@ class FakeIdentity:
         score = next(self.scores)
         return score if isinstance(score, LiveScores) else LiveScores(score, 1, 1)
 
+class FakeLanguage:
+    @asynccontextmanager
+    async def connect(self, language):
+        self.language=language
+        yield self
+    async def score(self, pcm):
+        from verivoice.providers.soniox_api import score_tokens
+        return score_tokens([{'text':'hello','confidence':.95,'language':self.language,'is_final':True}],self.language)
+
 class CallTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.path=Path(self.temp.name)/'accounts.sqlite3'
         self.providers=FakeProviders();self.speaker=FakeSpeaker();self.identity=FakeIdentity([.9,.6,.5])
         self.client=TestClient(create_app(settings=self.providers.settings,database=self.path,
-            providers=self.providers,call_speaker=self.speaker,call_identity=self.identity))
+            providers=self.providers,call_speaker=self.speaker,call_identity=self.identity,call_language=FakeLanguage()))
         self.details={'email':'call@example.com','password':'long test password','language':'en',
             'consent':True,'phone_region':'US','phone_number':'2025550123'}
         self.client.post('/api/register',headers={'X-Verivoice':'enrollment'},json=self.details)
@@ -314,7 +323,7 @@ class CallTests(unittest.TestCase):
             self.receive_type(ws,'ready');self.receive_type(ws,'intro_complete')
             self.send_window(ws)
             self.assertEqual(self.receive_type(ws,'confidence')['c'],.75)
-            self.assertIn('Hiya checked your voice',self.receive_type(ws,'verification_retry')['message'])
+            self.assertIn('Your voice and language were checked',self.receive_type(ws,'verification_retry')['message'])
             self.assertEqual(len(self.speaker.texts),1)
             ws.send_json({'type':'hangup'})
 

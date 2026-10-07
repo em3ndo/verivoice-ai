@@ -5,6 +5,8 @@ def main():
     settings = Settings.from_env()
     print("Demo languages:", ", ".join(SUPPORTED_LANGUAGES))
     print("Deepgram key:", "configured" if settings.deepgram_api_key else "missing")
+    print("Soniox key:", "configured" if settings.soniox_api_key else "missing")
+    print("Soniox model:", settings.soniox_model)
     print("Hiya key:", "configured" if settings.hiya_api_key else "missing")
     print("Gemini key:", "configured" if settings.gemini_api_key else "missing")
     print("Gemini model:", settings.gemini_model)

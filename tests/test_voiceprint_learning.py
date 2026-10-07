@@ -38,15 +38,15 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
 
     def test_raw_thresholds_and_duplicate_or_insufficient_recordings(self):
         for field in ('identity','synthesis','replay'):
-            self.assertFalse(self.learning.accept(self.account,replace(self.scores,**{field:.699})))
-            self.assertFalse(self.learning.accept(self.account,replace(self.scores,**{field:None})))
-        self.assertFalse(self.learning.accept(self.account,replace(self.scores,synthesis=.5)))
-        self.assertFalse(self.learning.accept(self.account,replace(self.scores,voice_seconds=.8)))
-        self.assertFalse(self.learning.accept(self.account,replace(self.scores,voice_seconds=None)))
-        self.assertFalse(self.learning.accept(self.account,replace(self.scores,audio_handle=None)))
-        self.assertFalse(self.learning.accept(dict(self.account,hiya_space='different'),self.scores))
-        self.assertTrue(self.learning.accept(self.account,self.scores))
-        self.assertFalse(self.learning.accept(self.account,self.scores))
+            self.assertFalse(self.learning.accept(self.account,replace(self.scores,**{field:.699}), language_score=1))
+            self.assertFalse(self.learning.accept(self.account,replace(self.scores,**{field:None}), language_score=1))
+        self.assertFalse(self.learning.accept(self.account,replace(self.scores,synthesis=.5), language_score=1))
+        self.assertFalse(self.learning.accept(self.account,replace(self.scores,voice_seconds=.8), language_score=1))
+        self.assertFalse(self.learning.accept(self.account,replace(self.scores,voice_seconds=None), language_score=1))
+        self.assertFalse(self.learning.accept(self.account,replace(self.scores,audio_handle=None), language_score=1))
+        self.assertFalse(self.learning.accept(dict(self.account,hiya_space='different'),self.scores, language_score=1))
+        self.assertTrue(self.learning.accept(self.account,self.scores, language_score=1))
+        self.assertFalse(self.learning.accept(self.account,self.scores, language_score=1))
         with self.accounts.connect() as db:
             row=dict(db.execute('SELECT * FROM voiceprint_samples').fetchone())
         self.assertEqual(row['account'],self.uid)
@@ -54,7 +54,7 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row['language_score'],1)
         self.assertEqual(row['source_voiceprint'],'main')
 
-    def test_language_stub_is_also_checked_at_the_same_threshold(self):
+    def test_measured_language_is_checked_at_the_same_threshold(self):
         for language in (None,.699):
             self.assertFalse(self.learning.accept(self.account,self.scores,language_score=language))
         self.assertTrue(self.learning.accept(self.account,self.scores,language_score=.7))
@@ -63,10 +63,10 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_security_phrase_is_reserved_once_and_marked_saved_only_after_compute(self):
         self.assertFalse(self.account['security_phrase_saved'])
-        self.assertFalse(self.learning.accept(self.account,replace(self.scores,synthesis=.6),is_security_phrase=True))
-        self.assertTrue(self.learning.accept(self.account,self.scores,is_security_phrase=True))
+        self.assertFalse(self.learning.accept(self.account,replace(self.scores,synthesis=.6),is_security_phrase=True, language_score=1))
+        self.assertTrue(self.learning.accept(self.account,self.scores,is_security_phrase=True, language_score=1))
         another=replace(self.scores,audio_handle='another-phrase')
-        self.assertFalse(self.learning.accept(self.account,another,is_security_phrase=True))
+        self.assertFalse(self.learning.accept(self.account,another,is_security_phrase=True, language_score=1))
         self.assertFalse(self.accounts.get(self.uid)['security_phrase_saved'])
         async def fail(*args):raise RuntimeError('unavailable')
         self.learning.builder.build=fail
@@ -77,17 +77,17 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
         await self.learning.refresh(self.uid,'test')
         self.assertTrue(self.accounts.get(self.uid)['security_phrase_saved'])
         # Use the stale call snapshot deliberately: eligibility reads current state.
-        self.assertFalse(self.learning.accept(self.account,another,is_security_phrase=True))
-        self.assertTrue(self.learning.accept(self.account,replace(self.scores,audio_handle='conversation'),is_security_phrase=False))
+        self.assertFalse(self.learning.accept(self.account,another,is_security_phrase=True, language_score=1))
+        self.assertTrue(self.learning.accept(self.account,replace(self.scores,audio_handle='conversation'),is_security_phrase=False, language_score=1))
         provider=FakeProviders()
         token=self.accounts.register('other@example.com','a long test password','en',provider,
             phone_region='US',phone_number='2025550124')
         other=self.accounts.authenticate(token)
         self.assertFalse(other['security_phrase_saved'])
-        self.assertTrue(self.learning.accept(other,another,is_security_phrase=True))
+        self.assertTrue(self.learning.accept(other,another,is_security_phrase=True, language_score=1))
 
     async def test_atomic_activation_preserves_enrollment_and_routes_future_calls(self):
-        self.learning.accept(self.account,self.scores)
+        self.learning.accept(self.account,self.scores, language_score=1)
         entered=asyncio.Event();release=asyncio.Event()
         async def build(account,samples):
             entered.set();await release.wait()
@@ -107,7 +107,7 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(set(history),{'main','adaptive-test'})
 
     async def test_failed_build_keeps_active_version_and_retries_on_restart(self):
-        self.learning.accept(self.account,self.scores)
+        self.learning.accept(self.account,self.scores, language_score=1)
         async def fail(*args):raise RuntimeError('unavailable')
         self.learning.builder.build=fail
         self.learning.schedule(self.uid,'test-call')
@@ -123,7 +123,7 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.learning.tasks,'Already processed samples must not retrain on each startup')
 
     async def test_account_change_during_build_prevents_activation(self):
-        self.learning.accept(self.account,self.scores)
+        self.learning.accept(self.account,self.scores, language_score=1)
         async def build(*args):
             with self.accounts.connect() as db:
                 db.execute("UPDATE accounts SET voiceprint='newer-version' WHERE id=?",(self.uid,))

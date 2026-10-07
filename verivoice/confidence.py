@@ -12,8 +12,11 @@ REMOVAL_THRESHOLD = .7
 class Confidence:
     ca: float | None = None
     ch: float | None = None
-    cl: float = 1.0
-    l: float = 1.0
+    cl: float | None = None
+    l: float | None = None
+    dominant_other: str | None = None
+    dominant_other_name: str | None = None
+    registered_language_name: str | None = None
     last_warning: float | None = None
     revoked: bool = False
     a: float | None = None
@@ -24,12 +27,14 @@ class Confidence:
 
     @property
     def c(self):
-        return None if self.ca is None or self.ch is None else min(self.ch, self.ca, self.cl)
+        return None if any(value is None for value in (self.ca, self.ch, self.cl)) else min(self.ch, self.ca, self.cl)
 
-    def update(self, instantaneous, synthesis, replay):
+    def update(self, instantaneous, synthesis, replay, language=None, *, dominant_other=None,
+               dominant_other_name=None, registered_language_name=None):
         score = optional_score(instantaneous)
         s, r = optional_score(synthesis), optional_score(replay)
-        if score is None or s is None or r is None:
+        l = optional_score(language)
+        if score is None or s is None or r is None or l is None:
             return self.snapshot()
         # Validate the complete observation before changing either EMA.
         self.a, self.s, self.r = score, s, r
@@ -37,6 +42,11 @@ class Confidence:
         self.h = min(self.s_adjusted, r)
         self.ca = score if self.ca is None else .5 * score + .5 * self.ca
         self.ch = self.h if self.ch is None else .5 * self.h + .5 * self.ch
+        self.l = l
+        self.cl = l if self.cl is None else .5 * l + .5 * self.cl
+        self.dominant_other = dominant_other
+        self.dominant_other_name = dominant_other_name
+        self.registered_language_name = registered_language_name
         return self.snapshot()
 
     def snapshot(self):
@@ -44,18 +54,33 @@ class Confidence:
         action = "pending" if c is None or c == REMOVAL_THRESHOLD else "revoke" if c < REMOVAL_THRESHOLD else "warn" if c < PASS_THRESHOLD else "allow"
         return {"type": "confidence", "c": c, "ca": self.ca, "ch": self.ch, "cl": self.cl,
                 "a": self.a, "s": self.s, "s_adjusted": self.s_adjusted,
-                "r": self.r, "h": self.h, "l": self.l, "action": action}
+                "r": self.r, "h": self.h, "l": self.l, "action": action,
+                "dominant_other": self.dominant_other, "dominant_other_name": self.dominant_other_name}
+
+    def language_warning(self):
+        if self.l is None or self.a is None or self.h is None or not self.dominant_other:
+            return None
+        if self.l < .7 and self.l <= min(self.a, self.h):
+            detected = self.dominant_other_name or self.dominant_other
+            expected = self.registered_language_name or 'your registered language'
+            return (f"{detected} was detected and is not registered for this account. "
+                    f"This account is enrolled for {expected}; enroll a separate identity for "
+                    f"{detected} if you would also like to speak {detected}.")
+        return None
 
     def notification(self, now):
         if self.revoked or self.c is None:
             return None
         if self.c < REMOVAL_THRESHOLD:
             self.revoked = True
-            return {"type": "removed", "message": REMOVAL, "close_after": 4}
-        if REMOVAL_THRESHOLD < self.c < PASS_THRESHOLD:
+            language = self.language_warning()
+            message = "Your call ended because language consistency was too low. " + language if language and self.cl <= min(self.ca, self.ch) else REMOVAL
+            return {"type": "removed", "message": message, "close_after": 4}
+        language = self.language_warning()
+        if REMOVAL_THRESHOLD < self.c < PASS_THRESHOLD or language:
             if self.last_warning is None or now - self.last_warning >= 10:
                 self.last_warning = now
-                return {"type": "warning", "message": WARNING}
+                return {"type": "warning", "message": language or WARNING}
         else:
             self.last_warning = None
         return None

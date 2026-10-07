@@ -131,10 +131,16 @@ for the same window. Synthesis is adjusted with `S_adjusted = S + 0.5 * (1 - S)`
 mapping `[0, 1]` to `[0.5, 1]`. Replay remains unchanged. `H = min(S_adjusted, R)`
 and `C_H = 0.5 * H + 0.5 * previous_C_H`;
 the first complete observation initializes each EMA from its instantaneous score.
-Only `C_L = 1` remains a stub, and
-`C = min(C_H, C_A, C_L)`. Updates arrive at the cadence of completed Hiya requests,
+Soniox labels finalized lexical tokens in the same audio window. `L` is the fraction
+matching the registered language among tokens with transcription confidence >= 0.80;
+all other languages and untagged qualifying tokens count against it. Low-confidence,
+missing-confidence, and invalid-confidence tokens are excluded from both numerator
+and denominator. No qualifying tokens means unavailable, not a passing L.
+Punctuation, control markers, provisional tokens and translations are excluded.
+`C_L = 0.5 * L + 0.5 * previous_C_L`, initialized from the first measured L, and
+`C = min(C_H, C_A, C_L)`. Updates arrive at the cadence of completed parallel Hiya and Soniox requests,
 not five times per second. Quiet audio does not update the EMA. Before the first
-complete identity/synthesis/replay observation, confidence is unavailable. A missing/invalid identity, synthesis, or replay score or provider failure ends
+complete identity/synthesis/replay/language observation, confidence is unavailable. A missing/invalid identity, synthesis, replay, or language score or provider failure ends
 the call with an availability message rather than treating missing evidence as a pass.
 
 `C >= 0.8` passes. Strictly `0.7 < C < 0.8` displays the requested warning immediately
@@ -158,7 +164,7 @@ History resets when the server restarts and the next event is recorded.
 
 For each completed Hiya verification, a recording qualifies for adaptive enrollment
 only when **raw identity, synthesis, replay, and instantaneous L are each >= 0.70**.
-`L = 1` remains a stub, so its eligibility check currently always passes. Neither
+L is measured by Soniox on that same recording; missing language evidence cannot qualify. Neither
 the synthesis adjustment nor any EMA is used for this decision.
 The call still requires overall confidence >= 0.80 to open the conversation.
 Each account (and its uniquely associated phone number) has a persistent
@@ -199,8 +205,18 @@ and [model requirements](https://developer.hiya.com/docs/audio-intel/model-index
 Gemini receives call audio; this differs from the text-only enrollment workflow.
 Browser calls use the synthesis and replay fields returned by the same Hiya
 identity verification request; they do not open a separate deepfake stream.
-Deepgram language scoring is not connected to browser calls yet. Hiya documents chunk-based deepfake results; Deepgram Flux language output
-provides language labels but no documented per-language confidence suitable for `C_L`.
+Soniox uses a persistent real-time WebSocket with manual finalization per verification window.
+Its token confidence estimates transcription accuracy, so VeriVoice calculates its own
+language ratio rather than treating transcription confidence as L. Language identification
+can follow sentence context; it is not a precise linguistic classification of every borrowed word.
+Deepgram remains in the enrollment workflow. Configure SONIOX_API_KEY and SONIOX_MODEL
+(default stt-rt-v5) on the server. No API key is sent to the browser.
+
+When raw L < 0.70 and is the lowest raw component, the warning names the uniquely
+dominant unexpected language. Tied language counts use the ordinary warning.
+Removal still depends on combined EMA C < 0.70; language gets no separate removal cutoff.
+Diagnostics retain token counts, dominant language, L, and provider/aggregation timings,
+without transcript text. Full windows are evaluated; no random sampling is used.
 
 ## Storage and limitations
 

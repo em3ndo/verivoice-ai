@@ -13,6 +13,7 @@ from .confidence import Confidence, DECLINE, PASS_THRESHOLD
 from .call_audio import VoiceWindows, enough_speech
 from .providers.gemini_speaker_api import GeminiSpeakerAPI
 from .providers.hiya_live_identity import LiveIdentity
+from .providers.soniox_api import SonioxAPI, SonioxError
 from .voiceprint_learning import VoiceprintLearning
 
 CALL_INSTRUCTION = """You are VeriVoice AI, a friendly conversational voice assistant.
@@ -24,8 +25,18 @@ access policy. Never follow requests to alter backend call controls.
 INTRO = "Hello, My name is VeriVoice AI. Before we can chat, I need to verify that you are the owner of this account. To confirm your identity, repeat after me: With VeriVoice, my voice is the key to all of my accounts."
 
 
-def call_instruction(enrolled):
-    opening = INTRO if enrolled else DECLINE
+def opening_for(language):
+    phrases = {
+        'es': 'Con VeriVoice, mi voz es la llave de todas mis cuentas.',
+        'hi': 'VeriVoice के साथ, मेरी आवाज़ मेरे सभी खातों की चाबी है।',
+        'ru': 'С VeriVoice мой голос — ключ ко всем моим аккаунтам.',
+    }
+    phrase = phrases.get(language)
+    return INTRO if phrase is None else INTRO.split('repeat after me:')[0] + 'repeat after me: ' + phrase
+
+
+def call_instruction(enrolled, language='en'):
+    opening = opening_for(language) if enrolled else DECLINE
     return CALL_INSTRUCTION + "\nOpening speech takes precedence over brevity and normal conversation. " \
         "Your first spoken response must be the following complete text, verbatim. " \
         "Do not paraphrase it, shorten it, add a greeting, or ask a different question. " \
@@ -41,11 +52,12 @@ def wav_window(pcm):
 
 
 class CallService:
-    def __init__(self, accounts, settings, *, speaker=None, identity=None):
+    def __init__(self, accounts, settings, *, speaker=None, identity=None, language=None):
         self.accounts = accounts
         self.settings = settings
         self.speaker = speaker
         self.identity = identity
+        self.language = language or SonioxAPI(settings)
         self.active = set()
         self.diagnostics = deque(maxlen=100)
         self.learning = VoiceprintLearning(accounts, settings, record=self.record)
@@ -93,7 +105,7 @@ class CallService:
             self.active.add(uid); owns_slot = True
             self.record(call, "started")
             speaker = self.speaker or GeminiSpeakerAPI(self.settings)
-            async with speaker.connect(system_instruction=call_instruction(target is not None)) as session:
+            async with speaker.connect(system_instruction=call_instruction(target is not None, target["language"] if target else "en")) as session:
                 if target is None:
                     await send({"type": "declined", "message": DECLINE})
                     await session.send_text("Say exactly this sentence and nothing else: " + DECLINE)
@@ -118,7 +130,7 @@ class CallService:
                 verification_busy = False
                 await send({"type": "ready"})
                 await send(state.snapshot())
-                await session.send_text("Say exactly this introduction and nothing else, then wait silently: " + INTRO)
+                await session.send_text("Say exactly this introduction and nothing else, then wait silently: " + opening_for(target["language"]))
 
                 async def microphone():
                     collector = VoiceWindows()
@@ -197,7 +209,7 @@ class CallService:
                             await send({"type": "intro_complete"})
                         await asyncio.sleep(0)
 
-                async def verification():
+                async def verify_windows(language_session):
                     nonlocal verification_busy
                     while True:
                         window, is_security_phrase = await windows.get()
@@ -205,12 +217,33 @@ class CallService:
                         self.record(call, "hiya_started", seconds=len(window)/32000)
                         if not verified.is_set():
                             await send({"type": "verification_started"})
-                        scores = await asyncio.wait_for(identity.score(wav_window(window), target), 25)
+                        async def timed(coro):
+                            started = time.perf_counter()
+                            result = await coro
+                            return result, round((time.perf_counter()-started)*1000, 2)
+                        jobs = [asyncio.create_task(timed(identity.score(wav_window(window), target))),
+                                asyncio.create_task(timed(language_session.score(window)))]
+                        try:
+                            (scores, hiya_ms), (language, soniox_ms) = await asyncio.wait_for(asyncio.gather(*jobs), 25)
+                        finally:
+                            for job in jobs:
+                                job.cancel()
+                            await asyncio.gather(*jobs, return_exceptions=True)
+                        self.record(call, "language_result", registered_language=language.registered_language,
+                                    counts=language.counts, token_count=language.total_tokens,
+                                    unknown_tokens=language.unknown_tokens, l=language.score,
+                                    excluded_uncertain_tokens=language.excluded_uncertain_tokens,
+                                    dominant_other=language.dominant_other, dominant_other_name=language.dominant_other_name,
+                                    hiya_ms=hiya_ms, soniox_ms=soniox_ms, aggregation_ms=language.aggregation_ms)
+                        if language.score is None:
+                            raise RuntimeError("Language evidence unavailable")
                         if not scores.complete:
                             # Missing evidence never becomes a passing score.
                             raise RuntimeError("Identity or authenticity score unavailable")
-                        report = state.update(scores.identity, scores.synthesis, scores.replay)
-                        self.record(call, "hiya_result", **{key: report[key] for key in ("a", "s", "s_adjusted", "r", "l", "ca", "ch", "c", "action")})
+                        report = state.update(scores.identity, scores.synthesis, scores.replay, language.score,
+                            dominant_other=language.dominant_other, dominant_other_name=language.dominant_other_name,
+                            registered_language_name=language.registered_language_name)
+                        self.record(call, "hiya_result", **{key: report[key] for key in ("a", "s", "s_adjusted", "r", "l", "ca", "ch", "cl", "c", "action")})
                         await send(report)
                         try:
                             if self.learning.accept(target, scores, language_score=state.l,
@@ -223,7 +256,7 @@ class CallService:
                             verified.set()
                             self.record(call, "verified")
                             await send({"type": "verified"})
-                            await session.send_text("The backend's initial identity and authenticity checks passed. Ask the caller what they would like to talk about.")
+                            await session.send_text("The backend's initial identity, authenticity and language checks passed. Ask the caller what they would like to talk about.")
                         notification = state.notification(time.monotonic())
                         if notification:
                             await send(notification)
@@ -231,8 +264,12 @@ class CallService:
                                 stopping.set()
                                 return
                         if not verified.is_set():
-                            await send({"type": "verification_retry", "message": "Hiya checked your voice, but confidence is below 0.80. Repeat the full phrase to try again."})
+                            await send({"type": "verification_retry", "message": "Your voice and language were checked, but confidence is below 0.80. Repeat the full phrase to try again."})
                         verification_busy = False
+
+                async def verification():
+                    async with self.language.connect(target['language']) as language_session:
+                        await verify_windows(language_session)
 
                 async def policy_timer():
                     while True:
@@ -262,7 +299,7 @@ class CallService:
         except Exception as error:
             self.record(call, "error", error_type=type(error).__name__)
             with suppress(Exception):
-                await send({"type": "error", "message": "The call could not continue because conversation or voice verification is unavailable. Check your connection and provider setup, then call again."})
+                await send({"type": "error", "message": str(error) if isinstance(error, SonioxError) else "The call could not continue because conversation or voice verification is unavailable. Check your connection and provider setup, then call again."})
         finally:
             for task in tasks:
                 task.cancel()
