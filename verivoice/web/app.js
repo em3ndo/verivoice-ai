@@ -9,15 +9,21 @@ async function api(path, body, raw=false) {
  return data;
 }
 function render(data) {
- current=data; $("account").hidden=true; $("enrollment").hidden=false;
- $("call-link").hidden=false;
+ current=data; $("account").hidden=true; $("signin").hidden=true; $("enrollment").hidden=false;
+ $("call-link").hidden=data.state!=="complete";
  $("account-phone").textContent=data.phone ? `Account phone: ${data.phone}` : "";
  $("progress").textContent=`${data.accepted} of ${data.total} sentences accepted`;
  $("meter").value=data.accepted; $("phrase").textContent=data.phrase || "";
  $("phrase").lang=data.language; $("record-panel").hidden=!data.phrase;
  $("finish").hidden=data.accepted!==5 || data.state==="complete";
  $("success").hidden=data.state!=="complete";
- $("reference").textContent=data.identity?`Hiya identity: ${data.identity} · Voiceprint: ${data.voiceprint}`:"";
+ const names={en:"English",es:"Spanish",hi:"Hindi",ru:"Russian"};
+ $("voice-language").replaceChildren(...data.voices.map(v=>new Option(`${names[v.language]}${v.state!=="complete"?" · finish enrollment":""}`,v.language,false,v.language===data.language)));
+ $("new-voice-language").replaceChildren(...data.available_languages.map(code=>new Option(names[code],code)));
+ $("new-voice-link").hidden=!data.available_languages.length;
+ $("new-voice-form").hidden=true;
+ $("meter").hidden=data.state==="complete";
+ $("progress").textContent=data.state==="complete"?`Signed in · ${names[data.language]} voice ready`:`${data.accepted} of ${data.total} sentences accepted`;
 }
 async function run(task) {
  if(busy) return; busy=true;
@@ -27,7 +33,13 @@ async function run(task) {
 }
 function credentials(){return {email:$("email").value,password:$("password").value,language:$("language").value,consent:$("consent").checked,phone_region:$("phone-region").value,phone_number:$("phone-number").value};}
 $("account-form").onsubmit=e=>{e.preventDefault();if(setupState && !setupState.ready){status("Account setup is unavailable until the backend configuration listed above is completed.",true);return;}run(async()=>{status("Creating your phrases…");render(await api("/api/register",credentials()));$("password").value="";status("Ready for your first recording.");});};
-$("login").onclick=()=>run(async()=>{render(await api("/api/login",credentials()));$("password").value="";status("Your saved progress is ready.");});
+$("signin-form").onsubmit=e=>{e.preventDefault();run(async()=>{render(await api("/api/login",{identifier:$("signin-identifier").value,password:$("signin-password").value}));$("signin-password").value="";status("Signed in.");});};
+$("show-create").onclick=e=>{e.preventDefault();$("signin").hidden=true;$("account").hidden=false;};
+$("show-signin").onclick=e=>{e.preventDefault();$("account").hidden=true;$("signin").hidden=false;};
+$("show-new-voice").onclick=e=>{e.preventDefault();$("new-voice-form").hidden=false;};
+$("cancel-new-voice").onclick=()=>{$("new-voice-form").hidden=true;};
+$("new-voice-form").onsubmit=e=>{e.preventDefault();run(async()=>{cleanup();status("Creating your registration sentences…");render(await api("/api/voices",{language:$("new-voice-language").value}));status("Read five sentences to enroll this language.");});};
+$("voice-language").onchange=()=>run(async()=>{cleanup();render(await api("/api/voice",{language:$("voice-language").value}));status("Voice language selected.");});
 $("logout").onclick=()=>run(async()=>{cleanup();await api("/api/logout",{});location.reload();});
 const callAudioContexts=new Map();
 window.takeCallAudioContext=name=>{const audio=callAudioContexts.get(name);callAudioContexts.delete(name);return audio;};

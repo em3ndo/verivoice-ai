@@ -11,12 +11,39 @@ import json
 import math
 import re
 import time
+import unicodedata
 
 import httpx
 from websockets.asyncio.client import connect
 
 
 TOKEN_CONFIDENCE_THRESHOLD = .80
+# Neutral brand spellings only: do not broadly forgive unrelated foreign speech.
+BRAND_ALIASES = frozenset({'verivoice', 'veryvoice', 'verryvoice', 'verivois',
+    'verivoices', 'वेरीवॉइस', 'वेरिवॉइस', 'веривойс', 'веривoйс',
+    'bytecoin', 'bytecoins', 'bitecoin', 'bitecoins',
+    'байткоин', 'байткоины', 'बाइटकॉइन', 'बाइटकॉइन्स'})
+
+
+def brand_part(text):
+    return ''.join(char for char in unicodedata.normalize('NFKC', text).casefold()
+                   if char.isalpha() or unicodedata.category(char).startswith('M'))
+
+
+def brand_indices(tokens):
+    """Match complete brand spans, including provider word/subword splits."""
+    parts = [brand_part(token['text']) for token in tokens]
+    ignored = set()
+    for start in range(len(parts)):
+        joined = ''
+        for end in range(start, min(start + 8, len(parts))):
+            joined += parts[end]
+            if joined in BRAND_ALIASES:
+                ignored.update(range(start, end + 1))
+                break
+            if not any(alias.startswith(joined) for alias in BRAND_ALIASES):
+                break
+    return ignored
 
 
 class SonioxError(RuntimeError):
@@ -42,6 +69,7 @@ class LanguageScore:
     registered_language_name: str
     aggregation_ms: float = 0
     excluded_uncertain_tokens: int = 0
+    excluded_brand_tokens: int = 0
 
 
 def score_tokens(tokens, registered_language, names=None):
@@ -53,6 +81,7 @@ def score_tokens(tokens, registered_language, names=None):
     counts = Counter()
     total = unknown = excluded = 0
     seen = set()
+    lexical = []
     for token in tokens:
         text = token.get('text', '')
         if token.get('is_final') is not True or token.get('translation_status') == 'translation':
@@ -67,6 +96,12 @@ def score_tokens(tokens, registered_language, names=None):
             if key in seen:
                 continue
             seen.add(key)
+        lexical.append(token)
+    neutral = brand_indices(lexical)
+    for index, token in enumerate(lexical):
+        if index in neutral:
+            continue
+        code = language_code(token.get('language'))
         confidence = token.get('confidence')
         if (isinstance(confidence, bool) or not isinstance(confidence, (int, float))
                 or not math.isfinite(confidence) or not TOKEN_CONFIDENCE_THRESHOLD <= confidence <= 1):
@@ -89,7 +124,7 @@ def score_tokens(tokens, registered_language, names=None):
     value = counts[registered] / total if total and counts else None
     return LanguageScore(value, registered, dict(counts), total, unknown, dominant,
         names.get(dominant, dominant), names.get(registered, registered),
-        (time.perf_counter() - started) * 1000, excluded)
+        (time.perf_counter() - started) * 1000, excluded, len(neutral))
 
 
 class SonioxSession:

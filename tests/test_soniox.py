@@ -18,6 +18,36 @@ class LanguageTests(unittest.TestCase):
         self.assertEqual(score.total_tokens,4)
         self.assertEqual(score.excluded_uncertain_tokens,2)
         self.assertEqual(score.dominant_other_name,'Spanish')
+    def test_brand_and_common_variants_are_neutral_in_all_languages(self):
+        for text in ('VeriVoice','Veri-Voice','Very Voice','VerryVoice','वेरीवॉइस','Веривойс'):
+            result=score_tokens([dict(token('en'),text=text),dict(token('es'),text='contraseña')],'es')
+            self.assertEqual(result.score,1)
+            self.assertEqual(result.total_tokens,1)
+            self.assertEqual(result.excluded_brand_tokens,1)
+            self.assertIsNone(result.dominant_other)
+    def test_split_brand_is_excluded_without_exempting_other_english_words(self):
+        tokens=[dict(token('en'),text=text) for text in (' Veri','Voice','my','password')]
+        tokens.append(dict(token('es'),text='voz'))
+        result=score_tokens(tokens,'es')
+        self.assertEqual(result.score,1/3)
+        self.assertEqual(result.excluded_brand_tokens,2)
+        self.assertEqual(result.counts,{'en':2,'es':1})
+        self.assertEqual(result.dominant_other,'en')
+    def test_brand_only_does_not_establish_language_or_overmatch_other_words(self):
+        self.assertIsNone(score_tokens([dict(token(),text='VeriVoice')],'es').score)
+        self.assertEqual(score_tokens([dict(token(),text='VeriVoiceover')],'es').score,0)
+        self.assertEqual(score_tokens([dict(token(),text='voice')],'es').score,0)
+
+    def test_bytecoin_names_are_neutral_but_other_currency_words_are_not(self):
+        for pieces in (('ByteCoin',),('ByteCoins',),('Byte','Coin'),('Byte','Coins'),('Bite Coin',)):
+            tokens=[dict(token('en'),text=text) for text in pieces]
+            tokens.append(dict(token('es'),text='cuenta'))
+            result=score_tokens(tokens,'es')
+            self.assertEqual(result.score,1)
+            self.assertEqual(result.excluded_brand_tokens,len(pieces))
+        self.assertIsNone(score_tokens([dict(token(),text='ByteCoin')],'es').score)
+        self.assertEqual(score_tokens([dict(token(),text='Bitcoin')],'es').score,0)
+
     def test_missing_evidence_never_passes(self):
         for tokens in ([],[token(None)],[token('en',.2)],[token('en',float('nan'))],[token('en',True)]):
             self.assertIsNone(score_tokens(tokens,'en').score)

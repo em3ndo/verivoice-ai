@@ -57,7 +57,8 @@ class VoiceprintLearning:
             return False
         with self.accounts.connect() as db:
             if is_security_phrase:
-                current = db.execute('SELECT security_phrase_saved FROM accounts WHERE id=?', (account['id'],)).fetchone()
+                table = self.accounts.profile_table(account)
+                current = db.execute(f'SELECT security_phrase_saved FROM {table} WHERE id=?', (account['id'],)).fetchone()
                 if current is None or current[0]:
                     return False
             return db.execute("""INSERT OR IGNORE INTO voiceprint_samples
@@ -105,14 +106,16 @@ class VoiceprintLearning:
         with self.accounts.connect() as db:
             # Switch atomically only if this is still the account and version
             # we built from. In-progress calls keep their original snapshot.
-            changed = db.execute("""UPDATE accounts SET voiceprint=? WHERE id=? AND state='complete'
-                AND voiceprint=? AND hiya_region=? AND hiya_owner=? AND hiya_space=? AND phone=?""",
+            table = self.accounts.profile_table(account)
+            phone_guard = 'phone=?' if table == 'accounts' else 'EXISTS (SELECT 1 FROM accounts WHERE accounts.id=voice_profiles.account AND accounts.phone=?)'
+            changed = db.execute(f"""UPDATE {table} SET voiceprint=? WHERE id=? AND state='complete'
+                AND voiceprint=? AND hiya_region=? AND hiya_owner=? AND hiya_space=? AND {phone_guard}""",
                 (built.handle, uid, account["voiceprint"], account["hiya_region"], account["hiya_owner"],
                  account["hiya_space"], account["phone"])).rowcount
             if changed != 1:
                 raise RuntimeError("Account changed during voiceprint update.")
             if any(sample['is_security_phrase'] and sample['audio'] in built.audios for sample in samples):
-                db.execute('UPDATE accounts SET security_phrase_saved=1 WHERE id=?', (uid,))
+                db.execute(f'UPDATE {table} SET security_phrase_saved=1 WHERE id=?', (uid,))
             if built.handle != account["voiceprint"]:
                 db.execute("INSERT OR IGNORE INTO voiceprint_versions VALUES (?,?,?,?,?)",
                     (uid, "main", "", account["audios"], time.time()))

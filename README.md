@@ -143,12 +143,13 @@ not five times per second. Quiet audio does not update the EMA. Before the first
 complete identity/synthesis/replay/language observation, confidence is unavailable. A missing/invalid identity, synthesis, replay, or language score or provider failure ends
 the call with an availability message rather than treating missing evidence as a pass.
 
-`C >= 0.8` passes. Strictly `0.7 < C < 0.8` displays the requested warning immediately
+Initial verification passes at `C >= 0.70`. The ongoing warning policy still uses
+0.80: strictly `0.7 < C < 0.8` displays the requested warning immediately
 and every ten seconds while that condition holds. `C < 0.7` stops media immediately,
 shows the removal message and closes the tab after four seconds. Exactly `C = 0.7`
-does not pass and triggers neither notice, preserving the specified strict inequalities.
+passes initial verification and triggers neither warning nor removal.
 The initial verification prompt is spoken before collecting the caller response.
-Microphone audio is withheld from Gemini until the combined confidence passes 0.8, after
+Microphone audio is withheld from Gemini until the combined confidence reaches 0.70, after
 which Gemini asks what the caller wants to talk about. Warning-range callers can
 keep trying; removal-range callers are disconnected. This checks voice identity,
 not whether the exact phrase was repeated. Hang-up, disconnect, logout/session
@@ -166,7 +167,7 @@ For each completed Hiya verification, a recording qualifies for adaptive enrollm
 only when **raw identity, synthesis, replay, and instantaneous L are each >= 0.70**.
 L is measured by Soniox on that same recording; missing language evidence cannot qualify. Neither
 the synthesis adjustment nor any EMA is used for this decision.
-The call still requires overall confidence >= 0.80 to open the conversation.
+The call still requires overall confidence >= 0.70 to open the conversation.
 Each account (and its uniquely associated phone number) has a persistent
 `security_phrase_saved` flag, initially false. At most one qualifying recording
 from the initial security-phrase stage is queued per account. The flag becomes
@@ -330,3 +331,39 @@ to be connected. Prompt instructions help explanation fidelity; security
 systems must consume backend reports directly, never Gemini's wording.
 
 Reference: [Google Live API capabilities](https://ai.google.dev/gemini-api/docs/live-api/capabilities).
+
+
+### Multiple voice languages and sign-in
+
+The initial page provides separate sign-in and account-creation forms. Sign-in needs
+only an email or phone number plus password. Phone sign-in accepts formatted numbers;
+non-US numbers must include the international country code. Existing accounts and
+voiceprints are preserved by an additive SQLite migration.
+
+Each account owns one unique email and phone number, with up to one voice enrollment
+per supported language (English, Spanish, Hindi, Russian). The original enrollment
+remains in accounts; additional enrollments live in voice_profiles with independent
+Hiya identity IDs, recordings, voiceprints, and security-phrase adaptation flags.
+The signed-in page offers only languages without an existing profile for new enrollment.
+Pending profiles can be resumed in the voice-language selector. Existing profiles can
+be selected for calls, which route by the account phone number and selected language.
+Selection belongs to the signed-in session; no profile IDs or Hiya references are
+returned in enrollment status or printed in the UI. One call per account is permitted.
+
+After verification, Gemini role-plays as a pretend banker at the imaginary firm
+Satoshi Bank. ByteCoin deposits, withdrawals, meme investments and VeriVoice token
+purchases are fictional dialogue only, with no real payments, transactions or credit changes.
+
+
+Spoken call scripts (verification opening, pretend-bank introduction, and enrollment-required
+farewell) are translated for English, Spanish, Hindi, and Russian in call_prompts.py.
+Gemini receives the selected enrollment language explicitly and is instructed to keep
+using it throughout verification and the fictional banking conversation. English's
+original verification opening remains unchanged. Brand names remain untranslated.
+
+
+VeriVoice and ByteCoin/ByteCoins brand tokens are language-neutral and excluded from both numerator and
+denominator of L, including bounded recognized aliases and split subword tokens.
+Other foreign words still count against the registered language, and brand-only
+recordings provide no language evidence. Diagnostics record excluded brand-token
+counts without storing transcript text. Arbitrary misrecognitions are not exempted.

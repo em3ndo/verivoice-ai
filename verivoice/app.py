@@ -23,6 +23,14 @@ class Credentials(BaseModel):
     language: str = "en"
     consent: bool = False
 
+class Login(BaseModel):
+    identifier: str | None = Field(default=None, max_length=254)
+    email: str | None = Field(default=None, max_length=254)
+    password: str = Field(min_length=1, max_length=128)
+
+class VoiceSelection(BaseModel):
+    language: str
+
 class Registration(Credentials):
     phone_region: str = Field(min_length=2, max_length=2)
     phone_number: str = Field(min_length=1, max_length=40)
@@ -138,10 +146,20 @@ def create_app(*, settings=None, database=None, providers=None, call_speaker=Non
         return calling_regions()
 
     @app.post("/api/login")
-    def login(body: Credentials, request: Request):
+    def login(body: Login, request: Request):
         with lock:
             throttle(request)
-            return respond(accounts.login(body.email, body.password))
+            return respond(accounts.login(body.identifier or body.email or "", body.password))
+
+    @app.post('/api/voices')
+    def new_voice(body: VoiceSelection, request: Request):
+        with lock:
+            return enrollment.status(accounts.add_voice(request.cookies.get('vv_session',''),body.language,providers))
+
+    @app.post('/api/voice')
+    def select_voice(body: VoiceSelection, request: Request):
+        with lock:
+            return enrollment.status(accounts.select_voice(request.cookies.get('vv_session',''),body.language))
 
     @app.post("/api/logout")
     def logout(request: Request):

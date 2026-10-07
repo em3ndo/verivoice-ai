@@ -11,6 +11,7 @@ import secrets
 import sqlite3
 import time
 import wave
+import phonenumbers
 from .providers.enrollment_api import EnrollmentError, LANGUAGES
 from .phone import normalize_phone
 
@@ -50,6 +51,13 @@ class Accounts:
               state TEXT NOT NULL DEFAULT 'pending', hiya_owner TEXT NOT NULL,
               hiya_space TEXT NOT NULL, hiya_region TEXT NOT NULL,
               voiceprint TEXT NOT NULL DEFAULT 'main');
+            CREATE TABLE IF NOT EXISTS voice_profiles (
+              id TEXT PRIMARY KEY, account TEXT NOT NULL, language TEXT NOT NULL,
+              phrases TEXT NOT NULL, audios TEXT NOT NULL DEFAULT '[]',
+              state TEXT NOT NULL DEFAULT 'pending', hiya_owner TEXT NOT NULL,
+              hiya_space TEXT NOT NULL, hiya_region TEXT NOT NULL,
+              voiceprint TEXT NOT NULL DEFAULT 'main', security_phrase_saved INTEGER NOT NULL DEFAULT 0,
+              UNIQUE(account,language));
             CREATE TABLE IF NOT EXISTS sessions (
               token TEXT PRIMARY KEY, account TEXT NOT NULL, expires REAL NOT NULL);
             """)
@@ -61,6 +69,9 @@ class Accounts:
             if "security_phrase_saved" not in columns:
                 db.execute("ALTER TABLE accounts ADD COLUMN security_phrase_saved INTEGER NOT NULL DEFAULT 0")
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS accounts_phone ON accounts(phone)")
+            session_columns = {row['name'] for row in db.execute('PRAGMA table_info(sessions)')}
+            if 'voice' not in session_columns:
+                db.execute('ALTER TABLE sessions ADD COLUMN voice TEXT')
         os.chmod(self.path, 0o600)
 
     @contextmanager
@@ -76,31 +87,91 @@ class Accounts:
     def get(self, uid):
         with self.connect() as db:
             row = db.execute("SELECT * FROM accounts WHERE id=?", (uid,)).fetchone()
-        return dict(row) if row else None
+            if row:
+                return dict(row)
+            profile = db.execute('SELECT * FROM voice_profiles WHERE id=?', (uid,)).fetchone()
+            if not profile:
+                return None
+            owner = db.execute('SELECT * FROM accounts WHERE id=?', (profile['account'],)).fetchone()
+            if not owner:
+                return None
+            return dict(owner) | dict(profile) | {'account_id': owner['id']}
 
-    def enrolled_phone(self, phone):
+    def profile_table(self, profile):
+        return 'voice_profiles' if profile.get('account_id') else 'accounts'
+
+    def voices(self, account):
+        root = account.get('account_id', account['id'])
+        owner = self.get(root)
+        result = [{'language': owner['language'], 'state': owner['state']}]
+        with self.connect() as db:
+            result.extend(dict(row) for row in db.execute(
+                'SELECT language,state FROM voice_profiles WHERE account=? ORDER BY language', (root,)))
+        return result
+
+    def select_voice(self, token, language):
+        account = self.authenticate(token)
+        root = account.get('account_id', account['id'])
+        owner = self.get(root)
+        with self.connect() as db:
+            profile = db.execute('SELECT id FROM voice_profiles WHERE account=? AND language=?', (root,language)).fetchone()
+            uid = root if language == owner['language'] else profile['id'] if profile else None
+            if uid is None:
+                raise EnrollmentError('Enroll this language first.')
+            db.execute('UPDATE sessions SET voice=? WHERE token=? AND account=?',
+                       (uid,hashlib.sha256(token.encode()).hexdigest(),root))
+        return self.get(uid)
+
+    def add_voice(self, token, language, providers):
+        account = self.authenticate(token)
+        root = account.get('account_id', account['id'])
+        if language not in LANGUAGES:
+            raise EnrollmentError('Select a supported language.')
+        if any(voice['language'] == language for voice in self.voices(account)):
+            raise EnrollmentError('This language already has a voice profile. Select it to resume or call.')
+        providers.ready()
+        phrases = providers.phrases(language)
+        uid = 'vv-' + secrets.token_hex(12)
+        settings = providers.settings
+        with self.connect() as db:
+            db.execute("""INSERT INTO voice_profiles
+                (id,account,language,phrases,hiya_owner,hiya_space,hiya_region) VALUES (?,?,?,?,?,?,?)""",
+                (uid,root,language,json.dumps(phrases,ensure_ascii=False),settings.hiya_owner,settings.hiya_space,settings.hiya_region))
+        return self.select_voice(token,language)
+
+    def enrolled_phone(self, phone, language=None):
         """Shared caller-number lookup for browser calls and future phone transport."""
         if not isinstance(phone, str) or not re.fullmatch(r"\+[1-9][0-9]{7,14}", phone):
             return None
         with self.connect() as db:
-            row = db.execute("SELECT * FROM accounts WHERE phone=? AND state='complete'", (phone,)).fetchone()
-        return dict(row) if row else None
+            row = db.execute("SELECT * FROM accounts WHERE phone=?", (phone,)).fetchone()
+        if not row:
+            return None
+        if language is None or row['language'] == language:
+            return dict(row) if row['state'] == 'complete' else None
+        with self.connect() as db:
+            voice = db.execute("SELECT id FROM voice_profiles WHERE account=? AND language=? AND state='complete'",
+                               (row['id'],language)).fetchone()
+        return self.get(voice['id']) if voice else None
 
     def session(self, uid):
         token = secrets.token_urlsafe(32)
         with self.connect() as db:
             db.execute("DELETE FROM sessions WHERE expires < ?", (time.time(),))
-            db.execute("INSERT INTO sessions VALUES (?,?,?)",
+            db.execute("INSERT INTO sessions(token,account,expires) VALUES (?,?,?)",
                        (hashlib.sha256(token.encode()).hexdigest(), uid, time.time()+3600*12))
         return token
 
     def authenticate(self, token):
         with self.connect() as db:
-            row = db.execute("SELECT account FROM sessions WHERE token=? AND expires>?",
+            row = db.execute("SELECT account,voice FROM sessions WHERE token=? AND expires>?",
                 (hashlib.sha256(token.encode()).hexdigest(), time.time())).fetchone()
         if not row:
             raise EnrollmentError("Please sign in to continue.")
-        return self.get(row[0])
+        profile = self.get(row['voice'] or row['account'])
+        if not profile or profile.get('account_id',profile['id']) != row['account']:
+            raise EnrollmentError('Please sign in to continue.')
+        return profile
 
     def register(self, email, password, language, providers, *, phone_region, phone_number):
         email = email.strip().casefold()
@@ -134,8 +205,17 @@ class Accounts:
     def login(self, email, password):
         if len(password) > 128:
             raise EnrollmentError("Email or password is incorrect.")
+        identifier = email.strip().casefold()
         with self.connect() as db:
-            row = db.execute("SELECT * FROM accounts WHERE email=?", (email.strip().casefold(),)).fetchone()
+            if '@' in identifier:
+                row = db.execute('SELECT * FROM accounts WHERE email=?', (identifier,)).fetchone()
+            else:
+                try:
+                    number = phonenumbers.parse(identifier, None if identifier.startswith('+') else 'US')
+                    phone = phonenumbers.format_number(number, phonenumbers.PhoneNumberFormat.E164) if phonenumbers.is_valid_number(number) else ''
+                except phonenumbers.NumberParseException:
+                    phone = ''
+                row = db.execute('SELECT * FROM accounts WHERE phone=?', (phone,)).fetchone()
         salt = row["password"].split(":")[0] if row else "00"*16
         computed = password_hash(password, salt)
         if not row or not hmac.compare_digest(computed, row["password"]):
@@ -143,11 +223,13 @@ class Accounts:
         return self.session(row["id"])
 
     def update(self, uid, *, audios=None, state=None):
+        profile = self.get(uid)
+        table = self.profile_table(profile)
         with self.connect() as db:
             if audios is not None:
-                db.execute("UPDATE accounts SET audios=? WHERE id=?", (json.dumps(audios),uid))
+                db.execute(f"UPDATE {table} SET audios=? WHERE id=?", (json.dumps(audios),uid))
             if state is not None:
-                db.execute("UPDATE accounts SET state=? WHERE id=?", (state,uid))
+                db.execute(f"UPDATE {table} SET state=? WHERE id=?", (state,uid))
 
     def logout(self, token):
         with self.connect() as db:
@@ -164,8 +246,8 @@ class Enrollment:
                 "phone": account["phone"], "phone_region": account["phone_region"],
                 "accepted": len(audios), "total": len(phrases), "state": account["state"],
                 "phrase": phrases[len(audios)] if len(audios) < len(phrases) else None,
-                "identity": account["id"] if account["state"] == "complete" else None,
-                "voiceprint": account["voiceprint"] if account["state"] == "complete" else None}
+                "voices": self.accounts.voices(account),
+                "available_languages": [code for code in LANGUAGES if code not in {v['language'] for v in self.accounts.voices(account)}]}
 
     def bound(self, account):
         for field in ("hiya_owner", "hiya_space", "hiya_region"):

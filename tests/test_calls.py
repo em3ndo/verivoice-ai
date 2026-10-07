@@ -18,6 +18,7 @@ from verivoice.app import create_app
 from verivoice.confidence import Confidence, DECLINE, REMOVAL
 from verivoice.enrollment import Accounts
 from verivoice.calls import enough_speech, wav_window, INTRO
+from verivoice.call_prompts import BANKER_OPENINGS
 from verivoice.call_audio import VoiceWindows
 from verivoice.providers.hiya_live_identity import LiveIdentity, LiveScores
 from verivoice.providers.hiya_voiceprint_builder import BuiltVoiceprint
@@ -78,7 +79,7 @@ class ConfidenceTests(unittest.TestCase):
     def test_boundaries_missing_and_invalid_scores(self):
         state = Confidence()
         self.assertEqual(state.update(None, 1, 1, 1)["action"], "pending")
-        for score, action in [(.8,"allow"), (.7,"pending"), (.699,"revoke"), (.799,"warn")]:
+        for score, action in [(.8,"allow"), (.7,"allow"), (.699,"revoke"), (.799,"warn")]:
             self.assertEqual(Confidence().update(score, 1, 1, 1)["action"],action)
         state.update(.7, 1, 1, 1)
         self.assertEqual(state.update(None, 1, 1, 1)["c"], .7)
@@ -198,6 +199,23 @@ class CallTests(unittest.TestCase):
     def send_window(self,ws):
         ws.send_json({"type":"intro_played"})
         for _ in range(16):ws.send_bytes(struct.pack('<h',8000)*4000)
+    def test_selected_additional_language_routes_to_its_own_voiceprint(self):
+        token=self.client.cookies['vv_session']
+        spanish=self.accounts.add_voice(token,'es',self.providers)
+        self.accounts.update(spanish['id'],state='complete',audios=['spanish-'+str(i) for i in range(5)])
+        with self.client.websocket_connect('/api/call',headers=self.origin) as ws:
+            ws.send_json({'type':'start','phone':'+12025550123'})
+            self.receive_type(ws,'ready');self.receive_type(ws,'confidence');self.receive_type(ws,'audio')
+            self.assertIn('Con VeriVoice',self.speaker.instruction)
+            self.send_window(ws)
+            self.assertEqual(self.receive_type(ws,'confidence')['cl'],1)
+            self.receive_type(ws,'verified')
+            self.assertEqual(self.identity.targets[0]['id'],spanish['id'])
+            self.assertEqual(self.identity.targets[0]['language'],'es')
+            self.assertIn(BANKER_OPENINGS['es'],self.speaker.texts[-1])
+            self.assertIn('Spanish (es)',self.speaker.instruction)
+            ws.send_json({'type':'hangup'})
+
     def test_call_phone_routing_background_ema_and_removal(self):
         with self.client.websocket_connect('/api/call',headers=self.origin) as ws:
             ws.send_json({'type':'start','phone':'+12025550123'})
@@ -272,13 +290,10 @@ class CallTests(unittest.TestCase):
             ws.send_bytes(struct.pack('<h',8000)*4000)
             self.send_window(ws)
             self.assertEqual(self.receive_type(ws,'confidence')['c'],.75)
+            self.receive_type(ws,'verified')
             self.receive_type(ws,'warning')
-            self.assertEqual(len(self.speaker.texts),1)
-            self.assertFalse(self.speaker.audio)
-            self.send_window(ws)
-            self.assertEqual(self.receive_type(ws,'confidence')['c'],.8)
-            self.receive_type(ws,'verified');self.receive_type(ws,'audio')
-            self.assertIn('what they would like to talk about',self.speaker.texts[1])
+            self.receive_type(ws,'audio')
+            self.assertIn('pretend banker at the imaginary firm Satoshi Bank',self.speaker.texts[1])
             self.send_window(ws)
             self.receive_type(ws,'confidence')
             self.assertTrue(self.speaker.audio)
@@ -316,16 +331,32 @@ class CallTests(unittest.TestCase):
                 self.assertEqual(recording.readframes(recording.getnframes()),bytes(6400)+voice+bytes(19200))
             ws.send_json({'type':'hangup'})
 
-    def test_below_threshold_result_explicitly_requests_another_attempt(self):
+    def test_initial_humanness_between_point_seven_and_point_eight_passes(self):
         self.identity.scores=iter([LiveScores(.95,.5,.95)])
         with self.client.websocket_connect('/api/call',headers=self.origin) as ws:
             ws.send_json({'type':'start','phone':'+12025550123'})
             self.receive_type(ws,'ready');self.receive_type(ws,'intro_complete')
             self.send_window(ws)
             self.assertEqual(self.receive_type(ws,'confidence')['c'],.75)
-            self.assertIn('Your voice and language were checked',self.receive_type(ws,'verification_retry')['message'])
-            self.assertEqual(len(self.speaker.texts),1)
+            self.receive_type(ws,'verified')
+            self.assertEqual(len(self.speaker.texts),2)
             ws.send_json({'type':'hangup'})
+
+    def test_initial_language_at_point_seven_passes_but_below_is_removed(self):
+        from verivoice.providers.soniox_api import score_tokens
+        for count in (7,6):
+            async def score(session, pcm, count=count):
+                return score_tokens([{'text':'word','is_final':True,'confidence':.95,
+                                     'language':'en' if i<count else 'es'} for i in range(10)],'en')
+            with patch.object(FakeLanguage,'score',score):
+                self.identity.scores=iter([LiveScores(.95,.5,.95)])
+                with self.client.websocket_connect('/api/call',headers=self.origin) as ws:
+                    ws.send_json({'type':'start','phone':'+12025550123'})
+                    self.receive_type(ws,'ready');self.receive_type(ws,'intro_complete')
+                    self.send_window(ws)
+                    self.assertEqual(self.receive_type(ws,'confidence')['c'],count/10)
+                    self.receive_type(ws,'verified' if count==7 else 'removed')
+                    ws.send_json({'type':'hangup'})
 
     def test_qualified_call_recording_updates_only_future_calls_after_hangup(self):
         with self.accounts.connect() as db:

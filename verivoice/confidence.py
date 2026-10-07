@@ -6,6 +6,7 @@ WARNING = "Your voice sounds suspicious, try speaking clearly and be yourself."
 REMOVAL = "You have been removed from this call because VeriVoice is not confident that you are this phone number's real owner"
 DECLINE = "Sorry, to continue this call you must enroll your phone number with a VeriVoice AI account. Thank you, and have a good day."
 PASS_THRESHOLD = .8
+INITIAL_PASS_THRESHOLD = .7
 REMOVAL_THRESHOLD = .7
 
 @dataclass
@@ -51,7 +52,7 @@ class Confidence:
 
     def snapshot(self):
         c = self.c
-        action = "pending" if c is None or c == REMOVAL_THRESHOLD else "revoke" if c < REMOVAL_THRESHOLD else "warn" if c < PASS_THRESHOLD else "allow"
+        action = "pending" if c is None else "revoke" if c < REMOVAL_THRESHOLD else "warn" if REMOVAL_THRESHOLD < c < PASS_THRESHOLD else "allow"
         return {"type": "confidence", "c": c, "ca": self.ca, "ch": self.ch, "cl": self.cl,
                 "a": self.a, "s": self.s, "s_adjusted": self.s_adjusted,
                 "r": self.r, "h": self.h, "l": self.l, "action": action,
