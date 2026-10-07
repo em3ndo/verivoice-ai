@@ -1,26 +1,44 @@
 """Digital identity, synthesis and replay scores on fresh microphone windows."""
 import asyncio
 import base64
+import io
+import re
 import time
+import wave
 from dataclasses import dataclass
 import httpx
 from .hiya_client import HiyaAPIError, segment, optional_score
 from .hiya_identity_api import IdentityResult
+
+
+def duration_seconds(value):
+    if not isinstance(value, str):
+        return None
+    match = re.fullmatch(r"PT(?:(\d+(?:\.\d+)?)H)?(?:(\d+(?:\.\d+)?)M)?(?:(\d+(?:\.\d+)?)S)?", value)
+    if not match or not any(match.groups()):
+        return None
+    return sum(float(part or 0) * scale for part, scale in zip(match.groups(), (3600, 60, 1)))
 
 @dataclass(frozen=True)
 class LiveScores:
     identity: float | None
     synthesis: float | None
     replay: float | None
+    audio_handle: str | None = None
+    verification_handle: str | None = None
+    audio_seconds: float | None = None
+    voice_seconds: float | None = None
 
     @classmethod
-    def from_response(cls, data):
+    def from_response(cls, data, *, audio_handle=None, audio_seconds=None):
         identity = IdentityResult.from_response(data).match_score
         scores = data.get("scores") or {}
         performed = data.get("state") == "performed"
         return cls(identity,
             optional_score(scores.get("synthesis")) if performed else None,
-            optional_score(scores.get("replay")) if performed else None)
+            optional_score(scores.get("replay")) if performed else None,
+            audio_handle, data.get("handle"), audio_seconds,
+            duration_seconds(data.get("voiceDuration")) if performed else None)
 
     @property
     def complete(self):
@@ -67,4 +85,6 @@ class LiveIdentity:
                 data = await request("GET", self.space + "/verifications/identity/" + segment(data["handle"]))
             # The current cloud identity response includes all three scores for
             # the same audio window. No duplicate upload or verification needed.
-            return LiveScores.from_response(data)
+            with wave.open(io.BytesIO(wav)) as recording:
+                seconds = recording.getnframes() / recording.getframerate()
+            return LiveScores.from_response(data, audio_handle=handle, audio_seconds=seconds)

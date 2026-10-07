@@ -1,5 +1,6 @@
 """Run locally: python -m verivoice.app (single worker, loopback only)."""
 from collections import defaultdict, deque
+from contextlib import asynccontextmanager
 from pathlib import Path
 import threading
 import time
@@ -35,7 +36,15 @@ def create_app(*, settings=None, database=None, providers=None, call_speaker=Non
     # Serializes operations in this local single-worker demo, including login and retries.
     lock = threading.Lock()
     attempts = defaultdict(deque)
-    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    @asynccontextmanager
+    async def lifespan(app):
+        await calls.learning.resume()
+        try:
+            yield
+        finally:
+            await calls.learning.close()
+
+    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1", "testserver"])
     app.mount("/static", StaticFiles(directory=ROOT / "verivoice" / "web"), name="static")
 

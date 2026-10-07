@@ -118,7 +118,7 @@ enrollments receive the enrollment-required Gemini farewell; the call ends after
 the browser confirms farewell audio playback. One call per account is permitted.
 
 Microphone PCM16 at 16 kHz is streamed to Gemini Live for conversation. Independently,
-fresh four-second windows with at least 1.5 seconds of non-quiet audio are uploaded
+fresh response windows (up to four seconds) with at least 1.5 seconds of non-quiet audio are uploaded
 to Hiya and compared against the selected identity/voiceprint. Hiya may retain these
 call clips under the space's audio-retention policy. No raw audio is saved locally.
 Only one identity request runs at a time; if it falls behind, the latest waiting
@@ -146,12 +146,55 @@ Microphone audio is withheld from Gemini until the combined confidence passes 0.
 which Gemini asks what the caller wants to talk about. Warning-range callers can
 keep trying; removal-range callers are disconnected. This checks voice identity,
 not whether the exact phrase was repeated. Hang-up, disconnect, logout/session
-expiry, and provider failure cancel background work.
+expiry, and provider failure cancel call processing. Qualified voiceprint samples
+remain available for the post-call update described below.
 
 `data/call-diagnostics.json` retains the latest 100 local call events: audio
 receipt/duration, opening completion, Hiya submission/results, and call outcome.
 It contains no audio, transcripts, credentials, phone numbers, or account IDs.
 History resets when the server restarts and the next event is recorded.
+
+### Adaptive voiceprints
+
+For each completed Hiya verification, a recording qualifies for adaptive enrollment
+only when **raw identity, synthesis, replay, and instantaneous L are each >= 0.70**.
+`L = 1` remains a stub, so its eligibility check currently always passes. Neither
+the synthesis adjustment nor any EMA is used for this decision.
+The call still requires overall confidence >= 0.80 to open the conversation.
+Each account (and its uniquely associated phone number) has a persistent
+`security_phrase_saved` flag, initially false. At most one qualifying recording
+from the initial security-phrase stage is queued per account. The flag becomes
+true only when a successfully computed, activated voiceprint includes that
+recording; failed updates leave it false and retry the same pending sample.
+Once true, subsequent security-phrase recordings are excluded from adaptation.
+Conversation recordings remain eligible. Capture-stage tags stay attached to
+queued audio, and the phrase stage ends only after verification and a speech
+pause, so delayed results or four-second chunk boundaries cannot relabel phrase
+audio as conversation. This identifies the call stage, not the spoken words.
+The existing Hiya audio handle is reused, with no duplicate upload. Provider-reported
+voice duration must also satisfy digital/v1's per-recording requirement (0.9 seconds
+when `minAudios=5`). Missing scores or duration never qualify.
+
+Hiya computed voiceprints are immutable, so this updates an account's profile by
+building a new version after the call ends. Each version preserves the original
+five recordings and adds the newest eligible recordings that fit the model's
+120-second total-duration limit. All eligible sample references/scores are retained
+in `voiceprint_samples` in the local account database; they do not change the five
+enrollment steps. Audio availability still follows Hiya's retention policy.
+
+The active voiceprint changes atomically only after Hiya confirms the replacement
+is computed with the expected recordings. Ongoing calls keep using the version
+they started with, while future phone-number lookups use the new version. Old
+versions remain in Hiya and `voiceprint_versions` for recovery. The original `main`
+voiceprint is preserved. Failed/unfinished updates keep the active version usable
+and retry on the next call or server startup; deterministic version names let a
+retry resume a partial build. Learning failures do not interrupt conversations.
+
+This expands the enrolled reference audio; it does not retrain Hiya's general
+model or guarantee accuracy gains. A false match admitted for adaptation can
+contaminate the profile, so evaluate the chosen 0.70 cutoff on genuine and impostor
+speech. Hiya documents [immutable computation](https://developer.hiya.com/docs/guides/voice-protection/results/compute-a-voiceprint)
+and [model requirements](https://developer.hiya.com/docs/audio-intel/model-index/voiceprint-models).
 
 Gemini receives call audio; this differs from the text-only enrollment workflow.
 Browser calls use the synthesis and replay fields returned by the same Hiya

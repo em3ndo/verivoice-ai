@@ -13,6 +13,7 @@ from .confidence import Confidence, DECLINE, PASS_THRESHOLD
 from .call_audio import VoiceWindows, enough_speech
 from .providers.gemini_speaker_api import GeminiSpeakerAPI
 from .providers.hiya_live_identity import LiveIdentity
+from .voiceprint_learning import VoiceprintLearning
 
 CALL_INSTRUCTION = """You are VeriVoice AI, a friendly conversational voice assistant.
 Have a natural conversation about topics the caller chooses. Respond in their language.
@@ -47,6 +48,7 @@ class CallService:
         self.identity = identity
         self.active = set()
         self.diagnostics = deque(maxlen=100)
+        self.learning = VoiceprintLearning(accounts, settings, record=self.record)
 
     def record(self, call, event, **details):
         # Bounded local metadata only: never audio, transcripts, keys or account IDs.
@@ -120,6 +122,7 @@ class CallService:
 
                 async def microphone():
                     collector = VoiceWindows()
+                    collector_initial = True
                     received_first_audio = False
                     next_progress = 16000
                     while True:
@@ -144,10 +147,14 @@ class CallService:
                                 await session.send_audio(pcm)
                             if not prompt_played.is_set():
                                 continue
+                            # Keep a partial response and queued windows tagged by
+                            # capture stage, even if a prior result unlocks the call.
+                            if verified.is_set() and collector.at_pause and not collector.buffer:
+                                collector_initial = False
                             for window in collector.feed(pcm):
                                 if windows.full():
                                     windows.get_nowait()
-                                windows.put_nowait(window)
+                                windows.put_nowait((window, collector_initial))
                                 self.record(call, "audio_queued", seconds=len(window)/32000)
                             if collector.received_samples >= next_progress:
                                 next_progress = collector.received_samples + 16000
@@ -193,7 +200,7 @@ class CallService:
                 async def verification():
                     nonlocal verification_busy
                     while True:
-                        window = await windows.get()
+                        window, is_security_phrase = await windows.get()
                         verification_busy = True
                         self.record(call, "hiya_started", seconds=len(window)/32000)
                         if not verified.is_set():
@@ -203,8 +210,15 @@ class CallService:
                             # Missing evidence never becomes a passing score.
                             raise RuntimeError("Identity or authenticity score unavailable")
                         report = state.update(scores.identity, scores.synthesis, scores.replay)
-                        self.record(call, "hiya_result", **{key: report[key] for key in ("a", "s", "s_adjusted", "r", "ca", "ch", "c", "action")})
+                        self.record(call, "hiya_result", **{key: report[key] for key in ("a", "s", "s_adjusted", "r", "l", "ca", "ch", "c", "action")})
                         await send(report)
+                        try:
+                            if self.learning.accept(target, scores, language_score=state.l,
+                                                    is_security_phrase=is_security_phrase):
+                                self.record(call, "voiceprint_sample_saved", security_phrase=is_security_phrase)
+                        except Exception as error:
+                            # A storage failure must not break voice verification.
+                            self.record(call, "voiceprint_sample_failed", error_type=type(error).__name__)
                         if not verified.is_set() and state.c >= PASS_THRESHOLD:
                             verified.set()
                             self.record(call, "verified")
@@ -257,6 +271,8 @@ class CallService:
             if owns_slot:
                 self.active.discard(uid)
                 self.record(call, "ended")
+                if target is not None:
+                    self.learning.schedule(uid, call)
             with suppress(Exception):
                 await ws.close()
 

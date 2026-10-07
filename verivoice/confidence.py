@@ -13,6 +13,7 @@ class Confidence:
     ca: float | None = None
     ch: float | None = None
     cl: float = 1.0
+    l: float = 1.0
     last_warning: float | None = None
     revoked: bool = False
     a: float | None = None
@@ -43,7 +44,7 @@ class Confidence:
         action = "pending" if c is None or c == REMOVAL_THRESHOLD else "revoke" if c < REMOVAL_THRESHOLD else "warn" if c < PASS_THRESHOLD else "allow"
         return {"type": "confidence", "c": c, "ca": self.ca, "ch": self.ch, "cl": self.cl,
                 "a": self.a, "s": self.s, "s_adjusted": self.s_adjusted,
-                "r": self.r, "h": self.h, "action": action}
+                "r": self.r, "h": self.h, "l": self.l, "action": action}
 
     def notification(self, now):
         if self.revoked or self.c is None:

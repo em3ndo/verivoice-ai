@@ -58,6 +58,8 @@ class Accounts:
                 db.execute("ALTER TABLE accounts ADD COLUMN phone TEXT")
             if "phone_region" not in columns:
                 db.execute("ALTER TABLE accounts ADD COLUMN phone_region TEXT")
+            if "security_phrase_saved" not in columns:
+                db.execute("ALTER TABLE accounts ADD COLUMN security_phrase_saved INTEGER NOT NULL DEFAULT 0")
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS accounts_phone ON accounts(phone)")
         os.chmod(self.path, 0o600)
 

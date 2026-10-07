@@ -36,6 +36,7 @@ class VoiceWindows:
         self.received_samples = 0
         self.total_active_samples = 0
         self.short_responses = 0
+        self.at_pause = True
 
     def feed(self, pcm):
         self.pending.extend(pcm)
@@ -48,8 +49,12 @@ class VoiceWindows:
             self.received_samples += samples
             if active:
                 self.total_active_samples += samples
+                self.at_pause = False
             if not self.buffer:
                 if not active:
+                    self.quiet_samples += samples
+                    if self.quiet_samples >= 9600:
+                        self.at_pause = True
                     self.preroll.extend(frame)
                     del self.preroll[:-6400]
                     continue
@@ -62,6 +67,8 @@ class VoiceWindows:
             else:
                 self.quiet_samples += samples
             if self.quiet_samples >= 9600 or len(self.buffer) >= 128000:
+                if self.quiet_samples >= 9600:
+                    self.at_pause = True
                 if self.active_samples >= MIN_ACTIVE_SAMPLES:
                     windows.append(bytes(self.buffer))
                 elif self.active_samples:

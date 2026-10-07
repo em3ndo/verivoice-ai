@@ -6,6 +6,7 @@ import io
 from pathlib import Path
 import struct
 import tempfile
+import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -19,6 +20,7 @@ from verivoice.enrollment import Accounts
 from verivoice.calls import enough_speech, wav_window, INTRO
 from verivoice.call_audio import VoiceWindows
 from verivoice.providers.hiya_live_identity import LiveIdentity, LiveScores
+from verivoice.providers.hiya_voiceprint_builder import BuiltVoiceprint
 from test_enrollment import FakeProviders
 
 class ConfidenceTests(unittest.TestCase):
@@ -128,6 +130,16 @@ class VoiceWindowTests(unittest.TestCase):
         self.assertEqual(collector.feed(bytes(320000)),[])
         self.assertEqual(collector.feed(struct.pack('<h',1000)*1600+bytes(32000)),[])
         self.assertEqual(collector.short_responses,1)
+
+    def test_window_boundary_is_not_a_response_pause(self):
+        collector=VoiceWindows()
+        collector.feed(struct.pack('<h',1000)*64000)
+        self.assertFalse(collector.buffer)
+        self.assertFalse(collector.at_pause,'Four-second cutoff must not end the security-phrase stage')
+        collector.feed(bytes(16000))
+        self.assertFalse(collector.at_pause)
+        collector.feed(bytes(3200))
+        self.assertTrue(collector.at_pause)
 
 class FakeSpeaker:
     def __init__(self):
@@ -305,6 +317,42 @@ class CallTests(unittest.TestCase):
             self.assertIn('Hiya checked your voice',self.receive_type(ws,'verification_retry')['message'])
             self.assertEqual(len(self.speaker.texts),1)
             ws.send_json({'type':'hangup'})
+
+    def test_qualified_call_recording_updates_only_future_calls_after_hangup(self):
+        with self.accounts.connect() as db:
+            uid=db.execute('SELECT id FROM accounts').fetchone()[0]
+        originals=[f'original-{i}' for i in range(5)]
+        self.accounts.update(uid,audios=originals)
+        self.identity.scores=iter([LiveScores(.95,.8,.9,'call-audio','call-verification',4,2)])
+        async def build(account,samples):
+            self.assertEqual(account['id'],uid)
+            self.assertEqual(account['voiceprint'],'main')
+            self.assertEqual(samples[0]['audio'],'call-audio')
+            return BuiltVoiceprint('adaptive-call',tuple(originals+['call-audio']),1)
+        with patch('verivoice.providers.hiya_voiceprint_builder.HiyaVoiceprintBuilder.build',side_effect=build):
+            with self.client:
+                with self.client.websocket_connect('/api/call',headers=self.origin) as ws:
+                    ws.send_json({'type':'start','phone':'+12025550123'})
+                    self.receive_type(ws,'ready');self.receive_type(ws,'intro_complete')
+                    self.send_window(ws);self.receive_type(ws,'verified')
+                    self.assertEqual(self.accounts.get(uid)['voiceprint'],'main')
+                    ws.send_json({'type':'hangup'})
+                    with self.assertRaises(WebSocketDisconnect):
+                        while True:ws.receive_json()
+                for _ in range(100):
+                    if self.accounts.get(uid)['voiceprint']=='adaptive-call':break
+                    time.sleep(.01)
+                self.assertEqual(self.accounts.get(uid)['voiceprint'],'adaptive-call')
+                self.assertTrue(self.accounts.get(uid)['security_phrase_saved'])
+                self.identity.scores=iter([LiveScores(.95,.95,.95,'second-phrase','second-verification',4,2)])
+                with self.client.websocket_connect('/api/call',headers=self.origin) as ws:
+                    ws.send_json({'type':'start','phone':'+12025550123'})
+                    self.receive_type(ws,'ready');self.receive_type(ws,'intro_complete')
+                    self.send_window(ws);self.receive_type(ws,'verified')
+                    self.assertEqual(self.identity.targets[-1]['voiceprint'],'adaptive-call')
+                    with self.accounts.connect() as db:
+                        self.assertEqual(db.execute('SELECT count(*) FROM voiceprint_samples').fetchone()[0],1)
+                    ws.send_json({'type':'hangup'})
     def test_origin_authentication_and_call_page(self):
         self.assertEqual(self.client.get('/call').status_code,200)
         for origin in [{}, {'origin':'https://evil.example'}]:
@@ -363,7 +411,10 @@ class LiveIdentityTests(unittest.IsolatedAsyncioTestCase):
         with patch('verivoice.providers.hiya_live_identity.httpx.AsyncClient',return_value=client):
             score=await LiveIdentity(settings).score(wav_window(bytes(128000)),{
                 'id':'account-identity','voiceprint':'main','hiya_owner':'owner','hiya_space':'main','hiya_region':'us'})
-        self.assertEqual(score,LiveScores(.82,.42,.92))
+        self.assertEqual((score.identity,score.synthesis,score.replay),(.82,.42,.92))
+        self.assertEqual(score.audio_handle,'fresh-audio')
+        self.assertEqual(score.verification_handle,'result')
+        self.assertEqual(score.audio_seconds,4)
         import json
         self.assertEqual(json.loads(requests[1].content),{'audio':'fresh-audio','identity':'account-identity','voiceprint':'main'})
         self.assertEqual(len(requests),2)
