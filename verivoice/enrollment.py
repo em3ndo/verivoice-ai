@@ -76,6 +76,14 @@ class Accounts:
             row = db.execute("SELECT * FROM accounts WHERE id=?", (uid,)).fetchone()
         return dict(row) if row else None
 
+    def enrolled_phone(self, phone):
+        """Shared caller-number lookup for browser calls and future phone transport."""
+        if not isinstance(phone, str) or not re.fullmatch(r"\+[1-9][0-9]{7,14}", phone):
+            return None
+        with self.connect() as db:
+            row = db.execute("SELECT * FROM accounts WHERE phone=? AND state='complete'", (phone,)).fetchone()
+        return dict(row) if row else None
+
     def session(self, uid):
         token = secrets.token_urlsafe(32)
         with self.connect() as db:

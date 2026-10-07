@@ -13,7 +13,11 @@ class IdentityResult:
     @classmethod
     def from_response(cls, data):
         state = data.get("state", "unknown")
-        return cls(optional_score(data.get("score")) if state == "performed" else None,
+        # Current cloud responses use scores.identity; older examples use score.
+        # Never substitute synthesis or replay scores for voice identity.
+        scores = data.get("scores") or {}
+        score = scores["identity"] if "identity" in scores else data.get("score")
+        return cls(optional_score(score) if state == "performed" else None,
                    state, data.get("handle"))
 
 class HiyaIdentityAPI:

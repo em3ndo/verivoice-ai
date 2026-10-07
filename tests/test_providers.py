@@ -31,6 +31,17 @@ class ProviderTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             IdentityResult.from_response({"state": "performed", "score": float("nan")})
 
+    def test_current_identity_response_and_legacy_compatibility(self):
+        current = {"state": "performed", "scores": {"identity": .96,
+            "synthesis": .42, "replay": .92}}
+        self.assertEqual(IdentityResult.from_response(current).match_score, .96)
+        self.assertEqual(IdentityResult.from_response({**current, "score": .1}).match_score, .96)
+        self.assertEqual(IdentityResult.from_response({"state": "performed", "score": .8}).match_score, .8)
+        self.assertIsNone(IdentityResult.from_response({"state": "performed", "scores": {"synthesis": .99}}).match_score)
+        self.assertIsNone(IdentityResult.from_response({**current, "state": "processing"}).match_score)
+        self.assertIsNone(IdentityResult.from_response({"state": "performed", "score": .8,
+            "scores": {"identity": None}}).match_score)
+
     def test_correct_hiya_requests_and_missing_enrollment(self):
         requests = []
         def handler(request):

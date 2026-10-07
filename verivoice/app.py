@@ -3,7 +3,7 @@ from collections import defaultdict, deque
 from pathlib import Path
 import threading
 import time
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, WebSocket
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -14,6 +14,7 @@ from .config import Settings, ConfigurationError, ROOT
 from .enrollment import Accounts, Enrollment, MAX_AUDIO
 from .providers.enrollment_api import EnrollmentProviders, EnrollmentError
 from .phone import calling_regions
+from .calls import CallService
 
 class Credentials(BaseModel):
     email: str = Field(max_length=254)
@@ -25,11 +26,12 @@ class Registration(Credentials):
     phone_region: str = Field(min_length=2, max_length=2)
     phone_number: str = Field(min_length=1, max_length=40)
 
-def create_app(*, settings=None, database=None, providers=None):
+def create_app(*, settings=None, database=None, providers=None, call_speaker=None, call_identity=None):
     settings = settings or Settings.from_env()
     providers = providers or EnrollmentProviders(settings)
     accounts = Accounts(database or ROOT / "data" / "accounts.sqlite3")
     enrollment = Enrollment(accounts, providers)
+    calls = CallService(accounts, settings, speaker=call_speaker, identity=call_identity)
     # Serializes operations in this local single-worker demo, including login and retries.
     lock = threading.Lock()
     attempts = defaultdict(deque)
@@ -97,6 +99,15 @@ def create_app(*, settings=None, database=None, providers=None):
     @app.get("/")
     def index():
         return FileResponse(ROOT / "verivoice" / "web" / "index.html")
+
+    @app.get("/call")
+    def call_page(request: Request):
+        account(request)
+        return FileResponse(ROOT / "verivoice" / "web" / "call.html")
+
+    @app.websocket("/api/call")
+    async def call_socket(socket: WebSocket):
+        await calls.handle(socket)
 
     @app.get("/api/setup")
     def setup():

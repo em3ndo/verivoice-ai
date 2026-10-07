@@ -10,6 +10,7 @@ async function api(path, body, raw=false) {
 }
 function render(data) {
  current=data; $("account").hidden=true; $("enrollment").hidden=false;
+ $("call-link").hidden=false;
  $("account-phone").textContent=data.phone ? `Account phone: ${data.phone}` : "";
  $("progress").textContent=`${data.accepted} of ${data.total} sentences accepted`;
  $("meter").value=data.accepted; $("phrase").textContent=data.phrase || "";
@@ -28,6 +29,20 @@ function credentials(){return {email:$("email").value,password:$("password").val
 $("account-form").onsubmit=e=>{e.preventDefault();if(setupState && !setupState.ready){status("Account setup is unavailable until the backend configuration listed above is completed.",true);return;}run(async()=>{status("Creating your phrases…");render(await api("/api/register",credentials()));$("password").value="";status("Ready for your first recording.");});};
 $("login").onclick=()=>run(async()=>{render(await api("/api/login",credentials()));$("password").value="";status("Your saved progress is ready.");});
 $("logout").onclick=()=>run(async()=>{cleanup();await api("/api/logout",{});location.reload();});
+const callAudioContexts=new Map();
+window.takeCallAudioContext=name=>{const audio=callAudioContexts.get(name);callAudioContexts.delete(name);return audio;};
+window.addEventListener("pagehide",()=>{for(const audio of callAudioContexts.values())audio.close().catch(()=>{});callAudioContexts.clear();});
+$("call").onclick=e=>{
+ e.preventDefault();
+ // Unlock playback inside the actual Call click, before any network request or
+ // new-tab navigation can lose the browser's user-activation permission.
+ const name=`vv-call-${crypto.randomUUID()}`;
+ const audio=new AudioContext({sampleRate:16000});
+ audio.resume().catch(()=>{});
+ callAudioContexts.set(name,audio);
+ const call=window.open("/call",name);
+ if(!call){callAudioContexts.delete(name);audio.close().catch(()=>{});status("Allow popups for VeriVoice to open the call window.",true);}
+};
 function cleanup(){clearInterval(timer);clearTimeout(autoStop);if(processor){processor.onaudioprocess=null;processor.disconnect();processor=null;}if(source){source.disconnect();source=null;}if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}if(audioContext){audioContext.close();audioContext=null;}$("record").disabled=false;$("stop").disabled=true;}
 $("record").onclick=async()=>{
  if(busy||stream) return; $("record").disabled=true;

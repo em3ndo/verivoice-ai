@@ -85,6 +85,52 @@ expires. An interrupted upload may also leave an unattached audio resource.
 If a stored audio expires before you finish, an operator must repair/restart that
 pending enrollment; automatic cleanup/re-enrollment is not implemented yet.
 
+## Browser calls
+
+After signing in, click **call verivoice ai**. A new tab opens with Hang up and a
+voice-volume slider. Allow microphone access. The call-link click activates audio playback before the new tab opens; the
+volume slider changes only playback volume. Volume starts at 30%, is limited
+to an 80% gain, and passes through a compressor. Headphone/device volume still
+determines actual loudness.
+
+The browser supplies the signed-in account's stored E.164 phone number. The backend
+uses `Accounts.enrolled_phone` to select the completed enrollment and digital
+voiceprint, and checks that this account belongs to the signed-in caller. The phone
+lookup can be reused by a future trusted telephony transport. Unknown or unfinished
+enrollments receive the enrollment-required Gemini farewell; the call ends after
+the browser confirms farewell audio playback. One call per account is permitted.
+
+Microphone PCM16 at 16 kHz is streamed to Gemini Live for conversation. Independently,
+fresh four-second windows with at least 1.5 seconds of non-quiet audio are uploaded
+to Hiya and compared against the selected identity/voiceprint. Hiya may retain these
+call clips under the space's audio-retention policy. No raw audio is saved locally.
+Only one identity request runs at a time; if it falls behind, the latest waiting
+window replaces older waiting windows to bound memory and avoid a growing backlog.
+
+`A` is Hiya's identity-match score, distinct from its non-synthetic score. The first
+valid result initializes `C_A`; each fresh result applies
+`C_A = 0.5 * A + 0.5 * previous_C_A`. `C_H = C_L = 1` are stubs and
+`C = min(C_H, C_A, C_L)`. Updates arrive at the cadence of completed Hiya requests,
+not five times per second. Quiet windows do not update the EMA. Before the first
+score, confidence is unavailable. A missing/invalid score or provider failure ends
+the call with an availability message rather than treating missing evidence as a pass.
+
+`C >= 0.8` passes. Strictly `0.7 < C < 0.8` displays the requested warning immediately
+and every ten seconds while that condition holds. `C < 0.7` stops media immediately,
+shows the removal message and closes the tab after four seconds. Exactly `C = 0.7`
+does not pass and triggers neither notice, preserving the specified strict inequalities.
+The initial verification prompt is spoken before collecting the caller response.
+Microphone audio is withheld from Gemini until the identity EMA passes 0.8, after
+which Gemini asks what the caller wants to talk about. Warning-range callers can
+keep trying; removal-range callers are disconnected. This checks voice identity,
+not whether the exact phrase was repeated. Hang-up, disconnect, logout/session
+expiry, and provider failure cancel background work.
+
+Gemini receives call audio; this differs from the text-only enrollment workflow.
+Hiya deepfake streaming and Deepgram language scoring are not connected to browser
+calls yet. Hiya documents chunk-based deepfake results; Deepgram Flux language output
+provides language labels but no documented per-language confidence suitable for `C_L`.
+
 ## Storage and limitations
 
 - VeriVoice stores email, phone number and selected country, salted scrypt password hashes, selected language, generated
@@ -95,7 +141,7 @@ pending enrollment; automatic cleanup/re-enrollment is not implemented yet.
   biometric voiceprint. Audio retention and voiceprint persistence are distinct.
 - Deepgram receives recordings with model-improvement opt-out. Its docs state these
   requests retain data only for the duration needed to process them.
-- Gemini receives the language, phrases and transcripts, never audio, account email,
+- During enrollment, Gemini receives the language, phrases and transcripts, never audio, account email,
   password or Hiya IDs. Free-tier input/output can be used for improvement and
   human review. Unexpected personal speech may appear in a transcript; only read
   the displayed nonpersonal sentences.

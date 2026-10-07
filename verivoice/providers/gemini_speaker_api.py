@@ -105,14 +105,14 @@ class GeminiSpeakerAPI:
         self.settings.require("gemini_api_key", "gemini_model")
 
     @asynccontextmanager
-    async def connect(self):
+    async def connect(self, *, system_instruction=SYSTEM_INSTRUCTION):
         client = genai.Client(api_key=self.settings.gemini_api_key)
         try:
             async with client.aio.live.connect(
                 model=self.settings.gemini_model,
                 config={"response_modalities": ["AUDIO"],
                         "output_audio_transcription": {},
-                        "system_instruction": SYSTEM_INSTRUCTION},
+                        "system_instruction": system_instruction},
             ) as session:
                 yield SpeakerSession(session)
         finally:
