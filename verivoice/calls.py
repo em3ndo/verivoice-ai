@@ -1,15 +1,16 @@
 """Authenticated browser-call transport; phone lookup is independent of transport."""
 import asyncio
 import base64
+from collections import deque
 from contextlib import suppress
 import io
 import json
-import math
-import struct
+import secrets
 import time
 import wave
 from fastapi import WebSocketDisconnect
 from .confidence import Confidence, DECLINE, PASS_THRESHOLD
+from .call_audio import VoiceWindows, enough_speech
 from .providers.gemini_speaker_api import GeminiSpeakerAPI
 from .providers.hiya_live_identity import LiveIdentity
 
@@ -38,20 +39,6 @@ def wav_window(pcm):
     return out.getvalue()
 
 
-def enough_speech(pcm):
-    # Quiet-window filter, not a biometric or reliable speech classifier.
-    active = 0
-    for offset in range(0, len(pcm), 640):
-        frame = pcm[offset:offset+640]
-        if not frame:
-            continue
-        values = struct.unpack("<" + "h" * (len(frame)//2), frame)
-        rms = math.sqrt(sum(v*v for v in values) / len(values)) / 32768
-        if rms >= .006:
-            active += len(values)
-    return active >= 24000  # At least 1.5 seconds of non-quiet audio.
-
-
 class CallService:
     def __init__(self, accounts, settings, *, speaker=None, identity=None):
         self.accounts = accounts
@@ -59,6 +46,13 @@ class CallService:
         self.speaker = speaker
         self.identity = identity
         self.active = set()
+        self.diagnostics = deque(maxlen=100)
+
+    def record(self, call, event, **details):
+        # Bounded local metadata only: never audio, transcripts, keys or account IDs.
+        self.diagnostics.append({"time": time.time(), "call": call, "event": event, **details})
+        with suppress(OSError):
+            self.accounts.path.with_name("call-diagnostics.json").write_text(json.dumps(list(self.diagnostics)))
 
     async def handle(self, ws):
         token = ws.cookies.get("vv_session", "")
@@ -81,6 +75,7 @@ class CallService:
         tasks = []
         uid = signed_in["id"]
         owns_slot = False
+        call = secrets.token_hex(6)
         try:
             start = await asyncio.wait_for(ws.receive_json(), 10)
             if not isinstance(start, dict) or start.get("type") != "start":
@@ -94,6 +89,7 @@ class CallService:
                 await send({"type": "error", "message": "You already have an active call. Hang up before calling again."})
                 return
             self.active.add(uid); owns_slot = True
+            self.record(call, "started")
             speaker = self.speaker or GeminiSpeakerAPI(self.settings)
             async with speaker.connect(system_instruction=call_instruction(target is not None)) as session:
                 if target is None:
@@ -116,12 +112,16 @@ class CallService:
                 stopping = asyncio.Event()
                 verified = asyncio.Event()
                 prompt_played = asyncio.Event()
+                intro_complete_sent = False
+                verification_busy = False
                 await send({"type": "ready"})
                 await send(state.snapshot())
                 await session.send_text("Say exactly this introduction and nothing else, then wait silently: " + INTRO)
 
                 async def microphone():
-                    buffer = bytearray()
+                    collector = VoiceWindows()
+                    received_first_audio = False
+                    next_progress = 16000
                     while True:
                         message = await ws.receive()
                         if message["type"] == "websocket.disconnect":
@@ -134,55 +134,91 @@ class CallService:
                         if pcm is not None:
                             if not pcm or len(pcm) > 16384 or len(pcm) % 2:
                                 raise ValueError("Invalid microphone frame")
+                            if not received_first_audio:
+                                received_first_audio = True
+                                self.record(call, "microphone_received")
+                                await send({"type": "microphone_received"})
                             # During the initial gate Gemini must not begin a conversation
                             # or interrupt its prompt based on unverified microphone audio.
                             if verified.is_set():
                                 await session.send_audio(pcm)
                             if not prompt_played.is_set():
                                 continue
-                            buffer.extend(pcm)
-                            while len(buffer) >= 128000:
-                                window = bytes(buffer[:128000]); del buffer[:128000]
-                                if enough_speech(window):
-                                    if windows.full():
-                                        windows.get_nowait()
-                                    windows.put_nowait(window)
+                            for window in collector.feed(pcm):
+                                if windows.full():
+                                    windows.get_nowait()
+                                windows.put_nowait(window)
+                                self.record(call, "audio_queued", seconds=len(window)/32000)
+                            if collector.received_samples >= next_progress:
+                                next_progress = collector.received_samples + 16000
+                                self.record(call, "audio_received", seconds=collector.received_samples/16000,
+                                            active_seconds=collector.total_active_samples/16000)
+                                if not verified.is_set() and not verification_busy and windows.empty():
+                                    if collector.active_samples:
+                                        message = "Hearing you. Finish the full verification phrase, then pause."
+                                    elif state.c is not None:
+                                        # Preserve the checked/below-threshold result until
+                                        # the caller actually starts another response.
+                                        continue
+                                    elif collector.short_responses:
+                                        message = "Your response was too short to check. Repeat the full verification phrase, then pause."
+                                    else:
+                                        message = "Microphone audio is arriving, but it is too quiet. Check the selected microphone and speak clearly."
+                                    await send({"type": "verification_waiting", "message": message})
                         elif message.get("text"):
                             control = json.loads(message["text"])
                             if control.get("type") == "hangup":
                                 return
                             if control.get("type") == "intro_played":
-                                prompt_played.set()
-                                buffer.clear()
+                                # A duplicate acknowledgment must never erase
+                                # microphone audio accumulated after the prompt.
+                                if not prompt_played.is_set():
+                                    prompt_played.set()
+                                    self.record(call, "listening")
+                                    await send({"type": "listening"})
                                 continue
                             raise ValueError("Invalid call control")
 
                 async def conversation():
+                    nonlocal intro_complete_sent
                     while True:
                         async for event in session.receive_turn():
                             await forward_audio(event, send)
-                        if not prompt_played.is_set():
+                        if not intro_complete_sent:
+                            intro_complete_sent = True
+                            self.record(call, "intro_complete")
                             await send({"type": "intro_complete"})
                         await asyncio.sleep(0)
 
                 async def verification():
+                    nonlocal verification_busy
                     while True:
                         window = await windows.get()
-                        score = await asyncio.wait_for(identity.score(wav_window(window), target), 25)
-                        if score is None:
+                        verification_busy = True
+                        self.record(call, "hiya_started", seconds=len(window)/32000)
+                        if not verified.is_set():
+                            await send({"type": "verification_started"})
+                        scores = await asyncio.wait_for(identity.score(wav_window(window), target), 25)
+                        if not scores.complete:
                             # Missing evidence never becomes a passing score.
-                            raise RuntimeError("Identity score unavailable")
-                        await send(state.update(score))
+                            raise RuntimeError("Identity or authenticity score unavailable")
+                        report = state.update(scores.identity, scores.synthesis, scores.replay)
+                        self.record(call, "hiya_result", **{key: report[key] for key in ("a", "s", "s_adjusted", "r", "ca", "ch", "c", "action")})
+                        await send(report)
                         if not verified.is_set() and state.c >= PASS_THRESHOLD:
                             verified.set()
+                            self.record(call, "verified")
                             await send({"type": "verified"})
-                            await session.send_text("The backend's initial identity check passed. Ask the caller what they would like to talk about.")
+                            await session.send_text("The backend's initial identity and authenticity checks passed. Ask the caller what they would like to talk about.")
                         notification = state.notification(time.monotonic())
                         if notification:
                             await send(notification)
                             if notification["type"] == "removed":
                                 stopping.set()
                                 return
+                        if not verified.is_set():
+                            await send({"type": "verification_retry", "message": "Hiya checked your voice, but confidence is below 0.80. Repeat the full phrase to try again."})
+                        verification_busy = False
 
                 async def policy_timer():
                     while True:
@@ -209,7 +245,8 @@ class CallService:
                     await asyncio.sleep(4)
         except (WebSocketDisconnect, asyncio.CancelledError):
             pass
-        except Exception:
+        except Exception as error:
+            self.record(call, "error", error_type=type(error).__name__)
             with suppress(Exception):
                 await send({"type": "error", "message": "The call could not continue because conversation or voice verification is unavailable. Check your connection and provider setup, then call again."})
         finally:
@@ -219,6 +256,7 @@ class CallService:
                 await asyncio.gather(*tasks, return_exceptions=True)
             if owns_slot:
                 self.active.discard(uid)
+                self.record(call, "ended")
             with suppress(Exception):
                 await ws.close()
 

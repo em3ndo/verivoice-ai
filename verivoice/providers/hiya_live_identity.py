@@ -1,10 +1,30 @@
-"""Repeated digital identity verifications on fresh four-second microphone windows."""
+"""Digital identity, synthesis and replay scores on fresh microphone windows."""
 import asyncio
 import base64
 import time
+from dataclasses import dataclass
 import httpx
-from .hiya_client import HiyaAPIError, segment
+from .hiya_client import HiyaAPIError, segment, optional_score
 from .hiya_identity_api import IdentityResult
+
+@dataclass(frozen=True)
+class LiveScores:
+    identity: float | None
+    synthesis: float | None
+    replay: float | None
+
+    @classmethod
+    def from_response(cls, data):
+        identity = IdentityResult.from_response(data).match_score
+        scores = data.get("scores") or {}
+        performed = data.get("state") == "performed"
+        return cls(identity,
+            optional_score(scores.get("synthesis")) if performed else None,
+            optional_score(scores.get("replay")) if performed else None)
+
+    @property
+    def complete(self):
+        return all(value is not None for value in (self.identity, self.synthesis, self.replay))
 
 class LiveIdentity:
     def __init__(self, settings):
@@ -45,4 +65,6 @@ class LiveIdentity:
                     raise HiyaAPIError("Hiya identity result unavailable.")
                 await asyncio.sleep(.25)
                 data = await request("GET", self.space + "/verifications/identity/" + segment(data["handle"]))
-            return IdentityResult.from_response(data).match_score
+            # The current cloud identity response includes all three scores for
+            # the same audio window. No duplicate upload or verification needed.
+            return LiveScores.from_response(data)

@@ -93,6 +93,23 @@ volume slider changes only playback volume. Volume starts at 30%, is limited
 to an 80% gain, and passes through a compressor. Headphone/device volume still
 determines actual loudness.
 
+The call window also shows the selected microphone and an input-level meter.
+Use the microphone selector to switch between built-in and headset microphones.
+The initial selection is **System default microphone**. Device-change notifications
+reconnect capture when that default input changes; choosing a specific microphone
+keeps it selected until it disconnects. A disconnected input falls back to the
+system default. Speaker output selection is separate from microphone selection.
+Capture uses the strongest input channel if a device exposes multiple channels.
+Capture starts a window at audible input, retains 200 ms of leading audio, and
+submits after a 600 ms pause or four seconds of continuous audio. At least 1.5
+seconds must exceed the quiet floor (0.0008 RMS). The filter does not estimate
+background noise from the same response: that could classify a quiet voice as
+noise. Hiya determines whether the submitted audio is speech. Recordings are
+not amplified, and identity thresholds are unchanged.
+The call confirms microphone receipt, Hiya submission, and a below-threshold
+result that requires another attempt. Opening playback completion follows the
+audio clock, so delayed browser completion callbacks cannot keep input blocked.
+
 The browser supplies the signed-in account's stored E.164 phone number. The backend
 uses `Accounts.enrolled_phone` to select the completed enrollment and digital
 voiceprint, and checks that this account belongs to the signed-in caller. The phone
@@ -109,10 +126,15 @@ window replaces older waiting windows to bound memory and avoid a growing backlo
 
 `A` is Hiya's identity-match score, distinct from its non-synthetic score. The first
 valid result initializes `C_A`; each fresh result applies
-`C_A = 0.5 * A + 0.5 * previous_C_A`. `C_H = C_L = 1` are stubs and
+`C_A = 0.5 * A + 0.5 * previous_C_A`. Hiya returns synthesis `S` and replay `R`
+for the same window. Synthesis is adjusted with `S_adjusted = S + 0.5 * (1 - S)`,
+mapping `[0, 1]` to `[0.5, 1]`. Replay remains unchanged. `H = min(S_adjusted, R)`
+and `C_H = 0.5 * H + 0.5 * previous_C_H`;
+the first complete observation initializes each EMA from its instantaneous score.
+Only `C_L = 1` remains a stub, and
 `C = min(C_H, C_A, C_L)`. Updates arrive at the cadence of completed Hiya requests,
-not five times per second. Quiet windows do not update the EMA. Before the first
-score, confidence is unavailable. A missing/invalid score or provider failure ends
+not five times per second. Quiet audio does not update the EMA. Before the first
+complete identity/synthesis/replay observation, confidence is unavailable. A missing/invalid identity, synthesis, or replay score or provider failure ends
 the call with an availability message rather than treating missing evidence as a pass.
 
 `C >= 0.8` passes. Strictly `0.7 < C < 0.8` displays the requested warning immediately
@@ -120,15 +142,21 @@ and every ten seconds while that condition holds. `C < 0.7` stops media immediat
 shows the removal message and closes the tab after four seconds. Exactly `C = 0.7`
 does not pass and triggers neither notice, preserving the specified strict inequalities.
 The initial verification prompt is spoken before collecting the caller response.
-Microphone audio is withheld from Gemini until the identity EMA passes 0.8, after
+Microphone audio is withheld from Gemini until the combined confidence passes 0.8, after
 which Gemini asks what the caller wants to talk about. Warning-range callers can
 keep trying; removal-range callers are disconnected. This checks voice identity,
 not whether the exact phrase was repeated. Hang-up, disconnect, logout/session
 expiry, and provider failure cancel background work.
 
+`data/call-diagnostics.json` retains the latest 100 local call events: audio
+receipt/duration, opening completion, Hiya submission/results, and call outcome.
+It contains no audio, transcripts, credentials, phone numbers, or account IDs.
+History resets when the server restarts and the next event is recorded.
+
 Gemini receives call audio; this differs from the text-only enrollment workflow.
-Hiya deepfake streaming and Deepgram language scoring are not connected to browser
-calls yet. Hiya documents chunk-based deepfake results; Deepgram Flux language output
+Browser calls use the synthesis and replay fields returned by the same Hiya
+identity verification request; they do not open a separate deepfake stream.
+Deepgram language scoring is not connected to browser calls yet. Hiya documents chunk-based deepfake results; Deepgram Flux language output
 provides language labels but no documented per-language confidence suitable for `C_L`.
 
 ## Storage and limitations

@@ -11,25 +11,39 @@ REMOVAL_THRESHOLD = .7
 @dataclass
 class Confidence:
     ca: float | None = None
-    ch: float = 1.0
+    ch: float | None = None
     cl: float = 1.0
     last_warning: float | None = None
     revoked: bool = False
+    a: float | None = None
+    s: float | None = None
+    s_adjusted: float | None = None
+    r: float | None = None
+    h: float | None = None
 
     @property
     def c(self):
-        return None if self.ca is None else min(self.ch, self.ca, self.cl)
+        return None if self.ca is None or self.ch is None else min(self.ch, self.ca, self.cl)
 
-    def update(self, instantaneous):
+    def update(self, instantaneous, synthesis, replay):
         score = optional_score(instantaneous)
-        if score is not None:
-            self.ca = score if self.ca is None else .5 * score + .5 * self.ca
+        s, r = optional_score(synthesis), optional_score(replay)
+        if score is None or s is None or r is None:
+            return self.snapshot()
+        # Validate the complete observation before changing either EMA.
+        self.a, self.s, self.r = score, s, r
+        self.s_adjusted = s + .5 * (1 - s)
+        self.h = min(self.s_adjusted, r)
+        self.ca = score if self.ca is None else .5 * score + .5 * self.ca
+        self.ch = self.h if self.ch is None else .5 * self.h + .5 * self.ch
         return self.snapshot()
 
     def snapshot(self):
         c = self.c
         action = "pending" if c is None or c == REMOVAL_THRESHOLD else "revoke" if c < REMOVAL_THRESHOLD else "warn" if c < PASS_THRESHOLD else "allow"
-        return {"type": "confidence", "c": c, "ca": self.ca, "ch": self.ch, "cl": self.cl, "action": action}
+        return {"type": "confidence", "c": c, "ca": self.ca, "ch": self.ch, "cl": self.cl,
+                "a": self.a, "s": self.s, "s_adjusted": self.s_adjusted,
+                "r": self.r, "h": self.h, "action": action}
 
     def notification(self, now):
         if self.revoked or self.c is None:

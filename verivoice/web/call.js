@@ -2,11 +2,15 @@
 const $=id=>document.getElementById(id);
 let socket, context, micStream, capture, micSource, gain, limiter;
 let ended=false, mediaStopped=false, nextAudio=0, sources=new Set(), noticeTimer, closeTimer, goodbyeTimer, introTimer;
+let introAcknowledged=false;
+let selectedMicrophone="", defaultMicrophoneKey=null, microphoneRequest=0;
 const setStatus=text=>$("status").textContent=text;
 function clearPlayback(){for(const source of sources){try{source.stop();}catch{}}sources.clear();nextAudio=context?.currentTime || 0;}
 function stopMedia(){
  mediaStopped=true;
- micStream?.getTracks().forEach(track=>track.stop());micStream=null;
+ $("mic-level").value=0;$("microphone").disabled=true;
+ microphoneRequest++;
+ micStream?.getTracks().forEach(track=>{track.onended=null;track.stop();});micStream=null;
  if(capture){capture.port.onmessage=null;capture.disconnect();capture=null;}
  micSource?.disconnect();micSource=null;clearPlayback();
  if(context){context.close().catch(()=>{});context=null;}
@@ -42,36 +46,92 @@ function playAudio(data){
  const start=Math.max(context.currentTime+.03,nextAudio);nextAudio=start+buffer.duration;
  sources.add(source);source.onended=()=>{sources.delete(source);source.disconnect();};source.start(start);
 }
-async function microphone(){
- micStream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});
- if(ended||mediaStopped){micStream.getTracks().forEach(track=>track.stop());micStream=null;return;}
- await context.audioWorklet.addModule("/static/microphone-worklet.js");
+async function microphone(deviceId=""){
  if(ended||mediaStopped)return;
+ const request=++microphoneRequest;
+ const audio={channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true};
+ if(deviceId)audio.deviceId={exact:deviceId};
+ const fresh=await navigator.mediaDevices.getUserMedia({audio,video:false});
+ if(ended||mediaStopped||request!==microphoneRequest){fresh.getTracks().forEach(track=>track.stop());return;}
+ try{await context.audioWorklet.addModule("/static/microphone-worklet.js");}
+ catch(error){fresh.getTracks().forEach(track=>track.stop());throw error;}
+ if(ended||mediaStopped||request!==microphoneRequest){fresh.getTracks().forEach(track=>track.stop());return;}
+ micStream?.getTracks().forEach(track=>{track.onended=null;track.stop();});
+ micSource?.disconnect();
+ if(capture){capture.port.onmessage=null;capture.disconnect();}
+ micStream=fresh;
+ selectedMicrophone=deviceId;
+ const track=fresh.getAudioTracks()[0];
+ track.onended=()=>{
+  if(micStream!==fresh||ended||mediaStopped)return;
+  bubble("Microphone disconnected. Switching to the system default microphone.");
+  microphone().catch(()=>bubble("Microphone unavailable. Select a microphone or check your input settings."));
+ };
  micSource=context.createMediaStreamSource(micStream);
  capture=new AudioWorkletNode(context,"microphone-capture");
  capture.port.onmessage=event=>{
   if(ended||mediaStopped||socket?.readyState!==WebSocket.OPEN)return;
   if(socket.bufferedAmount>256000){finish("Your connection cannot keep up with microphone audio. Call again.");return;}
-  socket.send(event.data);
+  $("mic-level").value=Math.min(1,event.data.rms*12);
+  socket.send(event.data.pcm);
  };
  micSource.connect(capture);capture.connect(context.destination);
  context.resume().catch(()=>{});
- setStatus("Connected. Listen to the verification prompt.");
+ await listMicrophones();
 }
+async function listMicrophones(){
+ if(!navigator.mediaDevices.enumerateDevices)return;
+ try{
+  const devices=(await navigator.mediaDevices.enumerateDevices()).filter(device=>device.kind==="audioinput");
+  const track=micStream?.getAudioTracks?.()[0];
+  const defaultDevice=devices.find(device=>device.deviceId==="default") || devices[0];
+  const key=defaultDevice?JSON.stringify([defaultDevice.deviceId,defaultDevice.groupId,defaultDevice.label]):"";
+  const defaultChanged=defaultMicrophoneKey!==null&&defaultMicrophoneKey!==key;
+  defaultMicrophoneKey=key;
+  $("microphone").replaceChildren(new Option("System default microphone",""),...devices.filter(device=>device.deviceId!=="default").map((device,index)=>new Option(device.label || `Microphone ${index+1}`,device.deviceId)));
+  $("microphone").value=selectedMicrophone;
+  $("mic-name").textContent=track?.label || "Microphone connected";
+  return {defaultChanged,devices};
+ }catch{/* Device enumeration is optional; capture can still continue. */}
+}
+$("microphone").onchange=async()=>{
+ const selector=$("microphone");selector.disabled=true;
+ try{await microphone(selector.value);}catch{bubble("Could not switch microphones. Check microphone permissions and try again.");await listMicrophones();}
+ finally{selector.disabled=false;}
+};
+navigator.mediaDevices?.addEventListener?.("devicechange",async()=>{
+ const result=await listMicrophones();
+ if(!result||!micStream||ended||mediaStopped)return;
+ const missing=selectedMicrophone&&!result.devices.some(device=>device.deviceId===selectedMicrophone);
+ if((!selectedMicrophone&&result.defaultChanged)||missing){
+  try{await microphone();}
+  catch{bubble("Could not follow the system microphone. Select a microphone or check your input settings.");}
+ }
+});
 async function handle(data){
  switch(data.type){
- case "ready": await microphone();break;
+ case "ready": await microphone();setStatus("Connected. Listen to the verification prompt.");break;
  case "audio": playAudio(data);break;
  case "intro_complete":
+  // Completion can be delivered more than once. Multiple polling timers used
+  // to keep sending intro_played and resetting the backend's speech buffer.
+  if(introAcknowledged||introTimer)return;
   introTimer=setInterval(()=>{
-   if(!context||context.state!=="running"||sources.size)return;
+   // Audio clock completion also works if a browser delays onended callbacks.
+   if(!context||context.state!=="running"||context.currentTime<nextAudio)return;
    clearInterval(introTimer);
+   introTimer=null;introAcknowledged=true;
    if(socket?.readyState===WebSocket.OPEN)socket.send(JSON.stringify({type:"intro_played"}));
    setStatus("Repeat the phrase to verify your voice.");
   },100);break;
+ case "listening":setStatus("Repeat the phrase to verify your voice.");break;
+ case "microphone_received":$("capture-status").textContent="Microphone audio received by VeriVoice.";break;
+ case "verification_waiting":setStatus(data.message);break;
+ case "verification_started":setStatus("Sending your recording to Hiya and checking your voice…");break;
+ case "verification_retry":setStatus(data.message);break;
  case "verified":setStatus("Voice verified. What would you like to talk about?");break;
  case "interrupted": clearPlayback();break;
- case "confidence": $("confidence").textContent=data.c===null?"Waiting for voice evidence":`Voice confidence: ${data.c.toFixed(2)}`;break;
+ case "confidence": $("confidence").textContent=data.c===null?"Waiting for voice evidence":`Voice confidence: ${data.c.toFixed(2)} · Identity: ${data.ca.toFixed(2)} · Authenticity: ${data.ch.toFixed(2)}`;break;
  case "warning": bubble(data.message);break;
  case "removed":
   clearInterval(introTimer);stopMedia();bubble(data.message,true);setStatus("Call ended.");
