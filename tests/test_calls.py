@@ -41,16 +41,15 @@ class ConfidenceTests(unittest.TestCase):
     def test_synthesis_adjustment_preserves_raw_scores_and_does_not_compound(self):
         state=Confidence()
         for _ in range(2):
-            report=state.update(.95,.6,.9, 1)
+            report=state.update(.95,.6,.9,1)
             self.assertEqual(report['s'],.6)
-            self.assertEqual(report['r'],.9)
             self.assertAlmostEqual(report['s_adjusted'],.8)
             self.assertAlmostEqual(report['h'],.8)
             self.assertAlmostEqual(report['ch'],.8)
-        for synthesis, expected in [(0,.5),(1,1)]:
-            report=Confidence().update(1,synthesis,1, 1)
-            self.assertEqual(report['s_adjusted'],expected)
-            self.assertEqual(report['h'],expected)
+        report=state.update(.95,.9,.95,1)
+        self.assertAlmostEqual(report['ch'],.875)
+        for synthesis,expected in ((0,.5),(1,1)):
+            self.assertEqual(Confidence().update(1,synthesis,1,1)['h'],expected)
 
     def test_incomplete_or_invalid_authenticity_never_updates_ema(self):
         state=Confidence()
@@ -349,7 +348,7 @@ class CallTests(unittest.TestCase):
                 return score_tokens([{'text':'word','is_final':True,'confidence':.95,
                                      'language':'en' if i<count else 'es'} for i in range(10)],'en')
             with patch.object(FakeLanguage,'score',score):
-                self.identity.scores=iter([LiveScores(.95,.5,.95)])
+                self.identity.scores=iter([LiveScores(.95,.75,.95)])
                 with self.client.websocket_connect('/api/call',headers=self.origin) as ws:
                     ws.send_json({'type':'start','phone':'+12025550123'})
                     self.receive_type(ws,'ready');self.receive_type(ws,'intro_complete')

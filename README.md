@@ -87,7 +87,7 @@ pending enrollment; automatic cleanup/re-enrollment is not implemented yet.
 
 ## Browser calls
 
-After signing in, click **call verivoice ai**. A new tab opens with Hang up and a
+After signing in, click **📞 Call Satoshi Bank customer service**. A new tab opens with Hang up and a
 voice-volume slider. Allow microphone access. The call-link click activates audio playback before the new tab opens; the
 volume slider changes only playback volume. Volume starts at 30%, is limited
 to an 80% gain, and passes through a compressor. Headphone/device volume still
@@ -127,9 +127,10 @@ window replaces older waiting windows to bound memory and avoid a growing backlo
 `A` is Hiya's identity-match score, distinct from its non-synthetic score. The first
 valid result initializes `C_A`; each fresh result applies
 `C_A = 0.5 * A + 0.5 * previous_C_A`. Hiya returns synthesis `S` and replay `R`
-for the same window. Synthesis is adjusted with `S_adjusted = S + 0.5 * (1 - S)`,
-mapping `[0, 1]` to `[0.5, 1]`. Replay remains unchanged. `H = min(S_adjusted, R)`
-and `C_H = 0.5 * H + 0.5 * previous_C_H`;
+for the same window. Synthesis is adjusted using `S_adjusted = S + 0.5 * (1 - S)`.
+Replay remains unchanged, and `H = min(S_adjusted, R)`. Raw S is retained for
+diagnostics and adaptive voiceprint eligibility.
+`C_H = 0.5 * H + 0.5 * previous_C_H`;
 the first complete observation initializes each EMA from its instantaneous score.
 Soniox labels finalized lexical tokens in the same audio window. `L` is the fraction
 matching the registered language among tokens with transcription confidence >= 0.80;
