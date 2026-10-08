@@ -1,3 +1,5 @@
+# From the project root: conda env create -f environment.yml
+# Includes the same pip dependencies as the venv installation.
 name: verivoiceai
 channels:
   - conda-forge

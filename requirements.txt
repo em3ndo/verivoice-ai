@@ -1,3 +1,5 @@
+# Install from the project root: python -m pip install -r requirements.txt
+# Python 3.13 recommended; runtime dependencies only. Soniox/Deepgram use HTTP/WebSocket APIs.
 httpx>=0.28,<0.29
 websockets>=15,<16
 python-dotenv>=1.1,<2
@@ -6,3 +8,4 @@ google-genai>=1.75,<2
 fastapi>=0.115,<1
 uvicorn>=0.34,<1
 phonenumbers>=9,<10
+pydantic>=2.11,<3
