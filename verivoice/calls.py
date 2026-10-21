@@ -246,8 +246,6 @@ class CallService:
                                     excluded_brand_tokens=language.excluded_brand_tokens,
                                     dominant_other=language.dominant_other, dominant_other_name=language.dominant_other_name,
                                     hiya_ms=hiya_ms, soniox_ms=soniox_ms, aggregation_ms=language.aggregation_ms)
-                        if language.score is None:
-                            raise RuntimeError("Language evidence unavailable")
                         if not scores.complete:
                             # Missing evidence never becomes a passing score.
                             raise RuntimeError("Identity or authenticity score unavailable")
@@ -257,13 +255,13 @@ class CallService:
                         self.record(call, "hiya_result", **{key: report[key] for key in ("a", "s", "s_adjusted", "r", "l", "ca", "ch", "cl", "c", "action")})
                         await send(report)
                         try:
-                            if self.learning.accept(target, scores, language_score=state.l,
+                            if self.learning.accept(target, scores, language_score=language.score,
                                                     is_security_phrase=is_security_phrase):
                                 self.record(call, "voiceprint_sample_saved", security_phrase=is_security_phrase)
                         except Exception as error:
                             # A storage failure must not break voice verification.
                             self.record(call, "voiceprint_sample_failed", error_type=type(error).__name__)
-                        if not verified.is_set() and state.c >= INITIAL_PASS_THRESHOLD:
+                        if not verified.is_set() and state.c is not None and state.c >= INITIAL_PASS_THRESHOLD:
                             verified.set()
                             self.record(call, "verified")
                             await send({"type": "verified"})
@@ -277,7 +275,10 @@ class CallService:
                                 stopping.set()
                                 return
                         if not verified.is_set():
-                            await send({"type": "verification_retry", "message": "Your voice and language were checked, but confidence is below 0.70. Repeat the full phrase to try again."})
+                            message = ("Please speak a longer phrase so we can check your language."
+                                       if language.score is None else
+                                       "Your voice and language were checked, but confidence is below 0.70. Repeat the full phrase to try again.")
+                            await send({"type": "verification_retry", "message": message})
                         verification_busy = False
 
                 async def verification():

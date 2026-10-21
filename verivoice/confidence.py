@@ -35,19 +35,21 @@ class Confidence:
         score = optional_score(instantaneous)
         s, r = optional_score(synthesis), optional_score(replay)
         l = optional_score(language)
-        if score is None or s is None or r is None or l is None:
+        if score is None or s is None or r is None:
             return self.snapshot()
-        # Validate the complete observation before changing either EMA.
+        # Validate identity/authenticity before updating their EMAs.
         self.a, self.s, self.r = score, s, r
         self.s_adjusted = s + .5 * (1 - s)
         self.h = min(self.s_adjusted, r)
         self.ca = score if self.ca is None else .5 * score + .5 * self.ca
         self.ch = self.h if self.ch is None else .5 * self.h + .5 * self.ch
-        self.l = l
-        self.cl = l if self.cl is None else .5 * l + .5 * self.cl
-        self.dominant_other = dominant_other
-        self.dominant_other_name = dominant_other_name
-        self.registered_language_name = registered_language_name
+        # An undersized language observation must not resample old evidence.
+        if l is not None:
+            self.l = l
+            self.cl = l if self.cl is None else .5 * l + .5 * self.cl
+            self.dominant_other = dominant_other
+            self.dominant_other_name = dominant_other_name
+            self.registered_language_name = registered_language_name
         return self.snapshot()
 
     def snapshot(self):

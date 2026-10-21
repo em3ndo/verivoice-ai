@@ -1,0 +1,173 @@
+{
+  "source": "data/call-diagnostics.json (bounded recent history, no ground-truth labels)",
+  "scope": "Successful completed windows only; failures counted separately. No new live API requests.",
+  "calls_with_completed_windows": 1,
+  "completed_windows": [
+    {
+      "clip_seconds": 3.68,
+      "combined_seconds": 2.3601059913635254,
+      "hiya_seconds": 2.35925,
+      "soniox_seconds": 1.83301,
+      "language_aggregation_ms": 0.14245801139622927
+    },
+    {
+      "clip_seconds": 4.0,
+      "combined_seconds": 2.446667194366455,
+      "hiya_seconds": 2.44584,
+      "soniox_seconds": 1.83137,
+      "language_aggregation_ms": 0.2442499971948564
+    },
+    {
+      "clip_seconds": 4.0,
+      "combined_seconds": 2.1782290935516357,
+      "hiya_seconds": 2.17733,
+      "soniox_seconds": 1.81921,
+      "language_aggregation_ms": 0.0850000069476664
+    },
+    {
+      "clip_seconds": 4.0,
+      "combined_seconds": 2.4254150390625,
+      "hiya_seconds": 2.42354,
+      "soniox_seconds": 1.81286,
+      "language_aggregation_ms": 0.13587501598522067
+    }
+  ],
+  "combined_verification_seconds": {
+    "n": 4,
+    "mean": 2.352604329586029,
+    "median": 2.3927605152130127,
+    "minimum": 2.1782290935516357,
+    "maximum": 2.446667194366455
+  },
+  "language_aggregation_ms": {
+    "n": 4,
+    "mean": 0.1518957578809932,
+    "median": 0.13916651369072497,
+    "minimum": 0.0850000069476664,
+    "maximum": 0.2442499971948564
+  },
+  "observed_call_errors": 1,
+  "observed_update_failures": 2,
+  "estimated_concurrency_saving_percent": 43.658326443045546,
+  "concurrency_note": "Arithmetic comparison to sum of measured provider times; not a sequential A/B benchmark.",
+  "policy_scenarios": [
+    {
+      "component": "identity",
+      "sustained_raw_score": 0.0,
+      "completed_observations_until_removal": 1,
+      "confidence_at_removal": 0.475,
+      "note": "Synthetic score sequence; not a voice attack or accuracy test."
+    },
+    {
+      "component": "identity",
+      "sustained_raw_score": 0.2,
+      "completed_observations_until_removal": 1,
+      "confidence_at_removal": 0.575,
+      "note": "Synthetic score sequence; not a voice attack or accuracy test."
+    },
+    {
+      "component": "identity",
+      "sustained_raw_score": 0.4,
+      "completed_observations_until_removal": 1,
+      "confidence_at_removal": 0.675,
+      "note": "Synthetic score sequence; not a voice attack or accuracy test."
+    },
+    {
+      "component": "identity",
+      "sustained_raw_score": 0.6,
+      "completed_observations_until_removal": 2,
+      "confidence_at_removal": 0.6875,
+      "note": "Synthetic score sequence; not a voice attack or accuracy test."
+    },
+    {
+      "component": "synthesis",
+      "sustained_raw_score": 0.0,
+      "completed_observations_until_removal": 2,
+      "confidence_at_removal": 0.6125,
+      "note": "Synthetic score sequence; not a voice attack or accuracy test."
+    },
+    {
+      "component": "synthesis",
+      "sustained_raw_score": 0.2,
+      "completed_observations_until_removal": 2,
+      "confidence_at_removal": 0.6875,
+      "note": "Synthetic score sequence; not a voice attack or accuracy test."
+    },
+    {
+      "component": "synthesis",
+      "sustained_raw_score": 0.4,
+      "completed_observations_until_removal": null,
+      "confidence_at_removal": null,
+      "note": "Synthetic score sequence; not a voice attack or accuracy test."
+    },
+    {
+      "component": "synthesis",
+      "sustained_raw_score": 0.6,
+      "completed_observations_until_removal": null,
+      "confidence_at_removal": null,
+      "note": "Synthetic score sequence; not a voice attack or accuracy test."
+    },
+    {
+      "component": "replay",
+      "sustained_raw_score": 0.0,
+      "completed_observations_until_removal": 1,
+      "confidence_at_removal": 0.475,
+      "note": "Synthetic score sequence; not a voice attack or accuracy test."
+    },
+    {
+      "component": "replay",
+      "sustained_raw_score": 0.2,
+      "completed_observations_until_removal": 1,
+      "confidence_at_removal": 0.575,
+      "note": "Synthetic score sequence; not a voice attack or accuracy test."
+    },
+    {
+      "component": "replay",
+      "sustained_raw_score": 0.4,
+      "completed_observations_until_removal": 1,
+      "confidence_at_removal": 0.675,
+      "note": "Synthetic score sequence; not a voice attack or accuracy test."
+    },
+    {
+      "component": "replay",
+      "sustained_raw_score": 0.6,
+      "completed_observations_until_removal": 2,
+      "confidence_at_removal": 0.6875,
+      "note": "Synthetic score sequence; not a voice attack or accuracy test."
+    },
+    {
+      "component": "language",
+      "sustained_raw_score": 0.0,
+      "completed_observations_until_removal": 1,
+      "confidence_at_removal": 0.475,
+      "note": "Synthetic score sequence; not a voice attack or accuracy test."
+    },
+    {
+      "component": "language",
+      "sustained_raw_score": 0.2,
+      "completed_observations_until_removal": 1,
+      "confidence_at_removal": 0.575,
+      "note": "Synthetic score sequence; not a voice attack or accuracy test."
+    },
+    {
+      "component": "language",
+      "sustained_raw_score": 0.4,
+      "completed_observations_until_removal": 1,
+      "confidence_at_removal": 0.675,
+      "note": "Synthetic score sequence; not a voice attack or accuracy test."
+    },
+    {
+      "component": "language",
+      "sustained_raw_score": 0.6,
+      "completed_observations_until_removal": 2,
+      "confidence_at_removal": 0.6875,
+      "note": "Synthetic score sequence; not a voice attack or accuracy test."
+    }
+  ],
+  "limitations": [
+    "No measured fraud detection rate, FAR, FRR, or EER without labeled audio.",
+    "Verification latency excludes audio collection, initial prompt, queue wait, and browser receipt.",
+    "Removal timing is observations, not seconds; missing speech and smoothing affect response time.",
+    "Raw synthesis is adjusted to 0.5 + 0.5*S, so persistent S >= 0.4 alone cannot cross below 0.7."
+  ]
+}

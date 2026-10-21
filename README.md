@@ -158,7 +158,7 @@ The site cannot be opened simply by double-clicking its HTML file.
 3. Click **Finish voice enrollment**. Wait for confirmation that enrollment succeeded.
 4. Click **📞 Call Satoshi Bank customer service**. Choose your actual microphone
    in the call window, and repeat the spoken verification phrase in the selected language.
-   In English: **“With VeriVoice, my voice is my password.”**
+   In English: **“Thanks to VeriVoice AI, I can kiss my passwords goodbye.”**
 5. After initial verification succeeds, Gemini begins the fictional banking conversation.
    Hang up with the call window's button. The volume slider controls only Gemini playback.
 

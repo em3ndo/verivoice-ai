@@ -261,7 +261,7 @@ purchases are fictional dialogue only, with no real payments, transactions or cr
 Spoken call scripts (verification opening, pretend-bank introduction, and enrollment-required
 farewell) are translated for English, Spanish, Hindi, and Russian in call_prompts.py.
 Gemini receives the selected enrollment language explicitly and is instructed to keep
-using it throughout verification and the fictional banking conversation. The verification phrase is: 'With VeriVoice, my voice is my password.' The English
+using it throughout verification and the fictional banking conversation. The verification phrase is: 'Thanks to VeriVoice AI, I can kiss my passwords goodbye.' The English
 opening identifies the Satoshi Bank brokerage account; translated openings use the selected language. Brand names remain untranslated.
 
 

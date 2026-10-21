@@ -4,10 +4,10 @@ from .confidence import DECLINE
 LANGUAGE_NAMES = {'en': 'English', 'es': 'Spanish', 'hi': 'Hindi', 'ru': 'Russian'}
 
 OPENINGS = {
-    'en': 'Hello, my name is VeriVoice AI. To verify that you are the owner of this Satoshi Bank brokerage account, please repeat after me: With VeriVoice, my voice is my password.',
-    'es': 'Hola, me llamo VeriVoice AI. Para verificar que usted es la persona titular de esta cuenta de inversión de Satoshi Bank, repita después de mí: Con VeriVoice, mi voz es mi contraseña.',
-    'hi': 'नमस्ते, मेरा नाम VeriVoice AI है। यह सत्यापित करने के लिए कि आप Satoshi Bank के इस ब्रोकरेज खाते के मालिक हैं, कृपया मेरे बाद दोहराएँ: VeriVoice के साथ, मेरी आवाज़ मेरा पासवर्ड है।',
-    'ru': 'Здравствуйте, меня зовут VeriVoice AI. Чтобы подтвердить, что вы являетесь владельцем этого брокерского счёта в Satoshi Bank, пожалуйста, повторите за мной: С VeriVoice мой голос — мой пароль.',
+    'en': 'Hello, my name is VeriVoice AI. To verify that you are the owner of this Satoshi Bank brokerage account, please repeat after me: Thanks to VeriVoice AI, I can kiss my passwords goodbye.',
+    'es': 'Hola, me llamo VeriVoice AI. Para verificar que usted es la persona titular de esta cuenta de inversión de Satoshi Bank, repita después de mí: Gracias a VeriVoice AI, puedo despedirme para siempre de mis contraseñas.',
+    'hi': 'नमस्ते, मेरा नाम VeriVoice AI है। यह सत्यापित करने के लिए कि आप Satoshi Bank के इस ब्रोकरेज खाते के मालिक हैं, कृपया मेरे बाद दोहराएँ: VeriVoice AI की बदौलत, मैं अपने पासवर्ड को हमेशा के लिए अलविदा कह सकता हूँ।',
+    'ru': 'Здравствуйте, меня зовут VeriVoice AI. Чтобы подтвердить, что вы являетесь владельцем этого брокерского счёта в Satoshi Bank, пожалуйста, повторите за мной: Благодаря VeriVoice AI я могу навсегда попрощаться со своими паролями.',
 }
 
 BANKER_OPENINGS = {

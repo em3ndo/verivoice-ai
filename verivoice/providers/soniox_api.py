@@ -18,6 +18,7 @@ from websockets.asyncio.client import connect
 
 
 TOKEN_CONFIDENCE_THRESHOLD = .80
+MIN_LANGUAGE_TOKENS = 7
 # Neutral brand spellings only: do not broadly forgive unrelated foreign speech.
 BRAND_ALIASES = frozenset({'verivoice', 'veryvoice', 'verryvoice', 'verivois',
     'verivoices', 'वेरीवॉइस', 'वेरिवॉइस', 'веривойс', 'веривoйс',
@@ -120,8 +121,8 @@ def score_tokens(tokens, registered_language, names=None):
         if len(leaders) == 1:
             dominant = leaders[0]
     # Untagged text cannot count as registered-language evidence. Completely
-    # untagged or empty output is unavailable, rather than a passing score.
-    value = counts[registered] / total if total and counts else None
+    # untagged output or fewer than seven eligible tokens provides no score.
+    value = counts[registered] / total if total >= MIN_LANGUAGE_TOKENS and counts else None
     return LanguageScore(value, registered, dict(counts), total, unknown, dominant,
         names.get(dominant, dominant), names.get(registered, registered),
         (time.perf_counter() - started) * 1000, excluded, len(neutral))

@@ -173,7 +173,7 @@ class FakeLanguage:
         yield self
     async def score(self, pcm):
         from verivoice.providers.soniox_api import score_tokens
-        return score_tokens([{'text':'hello','confidence':.95,'language':self.language,'is_final':True}],self.language)
+        return score_tokens([{'text':'hello','confidence':.95,'language':self.language,'is_final':True}] * 7,self.language)
 
 class CallTests(unittest.TestCase):
     def setUp(self):
@@ -205,7 +205,7 @@ class CallTests(unittest.TestCase):
         with self.client.websocket_connect('/api/call',headers=self.origin) as ws:
             ws.send_json({'type':'start','phone':'+12025550123'})
             self.receive_type(ws,'ready');self.receive_type(ws,'confidence');self.receive_type(ws,'audio')
-            self.assertIn('Con VeriVoice',self.speaker.instruction)
+            self.assertIn('Gracias a VeriVoice AI',self.speaker.instruction)
             self.send_window(ws)
             self.assertEqual(self.receive_type(ws,'confidence')['cl'],1)
             self.receive_type(ws,'verified')
@@ -340,6 +340,35 @@ class CallTests(unittest.TestCase):
             self.receive_type(ws,'verified')
             self.assertEqual(len(self.speaker.texts),2)
             ws.send_json({'type':'hangup'})
+
+    def test_short_language_samples_wait_then_preserve_previous_language_score(self):
+        from verivoice.providers.soniox_api import score_tokens
+        observations = iter([('en', 6), ('en', 7), ('es', 6)])
+        async def score(session, pcm):
+            language, count = next(observations)
+            return score_tokens([{'text':'word','is_final':True,'confidence':.95,
+                                  'language':language}] * count, 'en')
+        self.identity.scores = iter([LiveScores(.9,.9,.9)] * 3)
+        with patch.object(FakeLanguage, 'score', score):
+            with self.client.websocket_connect('/api/call',headers=self.origin) as ws:
+                ws.send_json({'type':'start','phone':'+12025550123'})
+                self.receive_type(ws,'ready');self.receive_type(ws,'intro_complete')
+                self.send_window(ws)
+                report = self.receive_type(ws,'confidence')
+                self.assertIsNone(report['cl'])
+                self.assertIsNone(report['c'])
+                self.assertIn('longer phrase',self.receive_type(ws,'verification_retry')['message'])
+                self.assertEqual(len(self.speaker.texts),1)
+                self.send_window(ws)
+                report = self.receive_type(ws,'confidence')
+                self.assertEqual(report['cl'],1)
+                self.receive_type(ws,'verified')
+                self.send_window(ws)
+                report = self.receive_type(ws,'confidence')
+                self.assertEqual((report['l'],report['cl']),(1,1))
+                self.assertIsNone(report['dominant_other'])
+                self.assertEqual(report['action'],'allow')
+                ws.send_json({'type':'hangup'})
 
     def test_initial_language_at_point_seven_passes_but_below_is_removed(self):
         from verivoice.providers.soniox_api import score_tokens

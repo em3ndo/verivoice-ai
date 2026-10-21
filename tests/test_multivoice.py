@@ -90,8 +90,8 @@ class MultiVoiceTests(unittest.TestCase):
         self.assertIn('pretend banker at the imaginary firm Satoshi Bank',CALL_INSTRUCTION)
         self.assertIn('Never perform or claim to perform real payments',CALL_INSTRUCTION)
         self.assertIn(INTRO,call_instruction(True))
-        self.assertIn('Con VeriVoice',opening_for('es'))
-        self.assertIn('मेरी आवाज़',opening_for('hi'))
+        self.assertIn('Gracias a VeriVoice AI',opening_for('es'))
+        self.assertIn('अपने पासवर्ड को हमेशा के लिए अलविदा',opening_for('hi'))
 
 class AdditionalVoiceLearningTests(unittest.IsolatedAsyncioTestCase):
     async def test_adaptation_updates_only_selected_language_identity(self):
