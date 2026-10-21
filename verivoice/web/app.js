@@ -1,5 +1,6 @@
 "use strict";
 const $ = id => document.getElementById(id);
+let resetLanguage;
 let current, audioContext, stream, processor, source, chunks = [], timer, autoStop, startTime, busy = false, setupState = null;
 function status(text, error=false) { $("status").textContent=text; $("status").className=error?"error":""; }
 async function api(path, body, raw=false) {
@@ -15,13 +16,14 @@ function render(data) {
  $("progress").textContent=`${data.accepted} of ${data.total} sentences accepted`;
  $("meter").value=data.accepted; $("phrase").textContent=data.phrase || "";
  $("phrase").lang=data.language; $("record-panel").hidden=!data.phrase;
- $("finish").hidden=data.accepted!==5 || data.state==="complete";
+ $("finish").hidden=data.accepted!==5 || data.state!=="pending";
  $("success").hidden=data.state!=="complete";
  const names={en:"English",es:"Spanish",hi:"Hindi",ru:"Russian"};
  $("voice-language").replaceChildren(...data.voices.map(v=>new Option(`${names[v.language]}${v.state!=="complete"?" · finish enrollment":""}`,v.language,false,v.language===data.language)));
  $("new-voice-language").replaceChildren(...data.available_languages.map(code=>new Option(names[code],code)));
  $("new-voice-link").hidden=!data.available_languages.length;
  $("new-voice-form").hidden=true;
+ $("reset-voice").textContent=data.state==="resetting"?"Retry selected voice reset":"Reset selected voice";
  $("meter").hidden=data.state==="complete";
  $("progress").textContent=data.state==="complete"?`Signed in · ${names[data.language]} voice ready`:`${data.accepted} of ${data.total} sentences accepted`;
 }
@@ -40,6 +42,26 @@ $("show-new-voice").onclick=e=>{e.preventDefault();$("new-voice-form").hidden=fa
 $("cancel-new-voice").onclick=()=>{$("new-voice-form").hidden=true;};
 $("new-voice-form").onsubmit=e=>{e.preventDefault();run(async()=>{cleanup();status("Creating your registration sentences…");render(await api("/api/voices",{language:$("new-voice-language").value}));status("Read five sentences to enroll this language.");});};
 $("voice-language").onchange=()=>run(async()=>{cleanup();render(await api("/api/voice",{language:$("voice-language").value}));status("Voice language selected.");});
+$("reset-voice").onclick=()=>{
+ if(busy) return;
+ cleanup(); resetLanguage=current.language;
+ const names={en:"English",es:"Spanish",hi:"Hindi",ru:"Russian"};
+ $("reset-question").textContent=`Are you really sure you want to reset your ${names[resetLanguage]} voice?`;
+ $("reset-dialog").showModal();
+};
+$("cancel-reset").onclick=()=>{$("reset-dialog").close();$("reset-voice").focus();};
+$("confirm-reset").onclick=()=>run(async()=>{
+ $("reset-dialog").close();
+ status("Deleting your selected voice from Hiya…");
+ try {
+  render(await api("/api/voice/reset",{language:resetLanguage,confirmed:true}));
+  status("Voice reset. Record five sentences to create a new identity for this language.");
+ } catch(error) {
+  try {render(await api("/api/me"));} catch {}
+  throw error;
+ }
+ $("reset-voice").focus();
+});
 $("logout").onclick=()=>run(async()=>{cleanup();await api("/api/logout",{});location.reload();});
 const callAudioContexts=new Map();
 window.takeCallAudioContext=name=>{const audio=callAudioContexts.get(name);callAudioContexts.delete(name);return audio;};

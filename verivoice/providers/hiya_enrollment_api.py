@@ -2,7 +2,7 @@
 import base64
 import time
 from .enrollment_common import EnrollmentError
-from .hiya_client import HiyaClient, segment
+from .hiya_client import HiyaClient, HiyaAPIError, segment
 from .hiya_synthesis_api import HiyaSynthesisAPI
 
 class HiyaEnrollmentAPI:
@@ -84,3 +84,29 @@ class HiyaEnrollmentAPI:
                     return
                 time.sleep(1)
             raise EnrollmentError("Hiya has not confirmed a computed voiceprint. Retry Finish shortly.")
+
+    def reset(self, identity):
+        """Delete every voiceprint version, then the language's Hiya identity.
+
+        DELETE returns no content. Missing resources make interrupted resets
+        retryable; other errors must never be treated as successful deletion.
+        """
+        with HiyaClient(self.settings) as hiya:
+            path = hiya.space_path + "/identities/" + segment(identity)
+            handles = []
+            page = 1
+            while True:
+                response = hiya.http.get(path + "/voiceprints", params={"page": page, "page-size": 50})
+                if response.status_code == 404:
+                    break
+                if response.is_error or not isinstance(response.json(), list):
+                    raise HiyaAPIError("Could not inspect Hiya voiceprints. Retry the reset.")
+                handles.extend(item["handle"] for item in response.json())
+                if page >= int(response.headers.get("Page-Total", "1")):
+                    break
+                page += 1
+            for resource in [hiya.space_path + "/voiceprints/" + segment(identity) + "/" + segment(handle)
+                             for handle in handles] + [path]:
+                response = hiya.http.delete(resource)
+                if response.status_code not in (204, 404):
+                    raise HiyaAPIError("Hiya deletion was not confirmed. Retry the reset.")

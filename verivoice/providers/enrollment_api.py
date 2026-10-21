@@ -15,6 +15,7 @@ class EnrollmentProviders:
         self.transcribe = deepgram.transcribe
         self.upload_checked = hiya.upload_checked
         self.finish = hiya.finish
+        self.reset = hiya.reset
 
     def ready(self):
         self.settings.require("gemini_api_key", "deepgram_api_key", "hiya_api_key",

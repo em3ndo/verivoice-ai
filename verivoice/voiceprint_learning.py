@@ -15,6 +15,7 @@ class VoiceprintLearning:
         self.accounts, self.settings, self.record = accounts, settings, record
         self.builder = builder or HiyaVoiceprintBuilder(settings)
         self.tasks = {}
+        self.operation_lock = asyncio.Lock()
         self.again = set()
         with accounts.connect() as db:
             db.executescript("""
@@ -56,6 +57,10 @@ class VoiceprintLearning:
         if not .9 <= voiced <= seconds <= 120:
             return False
         with self.accounts.connect() as db:
+            table = self.accounts.profile_table(account)
+            current = db.execute(f'SELECT state,generation FROM {table} WHERE id=?', (account['id'],)).fetchone()
+            if not current or current['state'] != 'complete' or current['generation'] != account.get('generation', 0):
+                return False
             if is_security_phrase:
                 table = self.accounts.profile_table(account)
                 current = db.execute(f'SELECT security_phrase_saved FROM {table} WHERE id=?', (account['id'],)).fetchone()
@@ -92,6 +97,11 @@ class VoiceprintLearning:
             self.again.discard(uid)
 
     async def refresh(self, uid, call):
+        # Reset waits for any remote build to finish before deleting its results.
+        async with self.operation_lock:
+            await self._refresh(uid, call)
+
+    async def _refresh(self, uid, call):
         account = self.accounts.get(uid)
         if not account or account["state"] != "complete":
             return

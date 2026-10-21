@@ -83,8 +83,39 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
         token=self.accounts.register('other@example.com','a long test password','en',provider,
             phone_region='US',phone_number='2025550124')
         other=self.accounts.authenticate(token)
+        self.accounts.update(other['id'],state='complete',audios=self.originals)
+        other=self.accounts.get(other['id'])
         self.assertFalse(other['security_phrase_saved'])
         self.assertTrue(self.learning.accept(other,another,is_security_phrase=True, language_score=1))
+
+    async def test_reset_waits_for_build_then_prevents_queued_learning(self):
+        self.learning.accept(self.account,self.scores,language_score=1)
+        entered=asyncio.Event();release=asyncio.Event();deleted=[]
+        async def build(account,samples):
+            entered.set()
+            await release.wait()
+            return BuiltVoiceprint('adaptive-before-reset',tuple(self.originals+['call-audio']),1)
+        self.learning.builder.build=build
+        building=asyncio.create_task(self.learning.refresh(self.uid,'test'))
+        await entered.wait()
+        from verivoice.enrollment import Enrollment
+        provider=FakeProviders()
+        provider.reset=lambda uid:deleted.append(self.accounts.get(uid)['voiceprint'])
+        async def reset():
+            async with self.learning.operation_lock:
+                Enrollment(self.accounts,provider).reset(self.accounts.get(self.uid))
+        resetting=asyncio.create_task(reset())
+        await asyncio.sleep(0)
+        self.assertFalse(resetting.done())
+        self.assertEqual(deleted,[])
+        release.set()
+        await building
+        await resetting
+        self.assertEqual(deleted,['adaptive-before-reset'])
+        self.assertEqual(self.accounts.get(self.uid)['state'],'pending')
+        async def unexpected(*args):self.fail('A queued build must not restore a reset voice')
+        self.learning.builder.build=unexpected
+        await self.learning.refresh(self.uid,'queued')
 
     async def test_atomic_activation_preserves_enrollment_and_routes_future_calls(self):
         self.learning.accept(self.account,self.scores, language_score=1)

@@ -2,13 +2,14 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
 const elements=new Map();
-function element(id){if(!elements.has(id))elements.set(id,{value:'',hidden:false,disabled:false,checked:false,replaceChildren(...children){this.children=children;}});return elements.get(id);}
+function element(id){if(!elements.has(id))elements.set(id,{value:'',hidden:false,disabled:false,checked:false,showModal(){this.open=true;},close(){this.open=false;},focus(){},replaceChildren(...children){this.children=children;}});return elements.get(id);}
 const requests=[];
 const en={email:'test@example.com',phone:'+12025550123',language:'en',state:'complete',accepted:5,total:5,phrase:null,voices:[{language:'en',state:'complete'}],available_languages:['es','hi','ru']};
 const es={...en,language:'es',state:'pending',accepted:0,phrase:'Read a Spanish sentence',voices:[...en.voices,{language:'es',state:'pending'}],available_languages:['hi','ru']};
+const reset={...en,state:'pending',accepted:0,phrase:'Record English again'};
 const context=vm.createContext({document:{getElementById:element,querySelectorAll:()=>[]},window:{addEventListener(){}},Intl,Option:function(label,value,defaultSelected,selected){Object.assign(this,{label,value,selected});},setInterval,clearInterval,setTimeout,clearTimeout,fetch:async(path,options)=>{
  requests.push({path,body:options?.body?JSON.parse(options.body):null});
- return {ok:path!=='/api/me',json:async()=>path==='/api/setup'?{ready:true}:path==='/api/calling-codes'?[]:path==='/api/voices'?es:en};
+ return {ok:path!=='/api/me',json:async()=>path==='/api/setup'?{ready:true}:path==='/api/calling-codes'?[]:path==='/api/voices'?es:path==='/api/voice/reset'?reset:en};
 }});
 vm.runInContext(fs.readFileSync('verivoice/web/app.js','utf8'),context);
 const settle=async()=>{for(let i=0;i<8;i++)await new Promise(resolve=>setImmediate(resolve));};
@@ -29,5 +30,19 @@ const settle=async()=>{for(let i=0;i<8;i++)await new Promise(resolve=>setImmedia
  assert.equal(element('call-link').hidden,true);assert.equal(element('record-panel').hidden,false);
  assert.deepEqual(element('new-voice-language').children.map(c=>c.value),['hi','ru']);
  assert.equal(element('phrase').lang,'es');
+ element('voice-language').value='en';element('voice-language').onchange();await settle();
+ element('reset-voice').onclick();
+ assert.equal(element('reset-dialog').open,true);
+ assert.match(element('reset-question').textContent,/English/);
+ element('cancel-reset').onclick();await settle();
+ assert.equal(element('reset-dialog').open,false);
+ assert.equal(requests.filter(r=>r.path==='/api/voice/reset').length,0);
+ assert.equal(element('call-link').hidden,false);
+ element('reset-voice').onclick();element('confirm-reset').onclick();await settle();
+ assert.deepEqual(requests.find(r=>r.path==='/api/voice/reset').body,{language:'en',confirmed:true});
+ assert.equal(element('call-link').hidden,true);
+ assert.equal(element('record-panel').hidden,false);
+ assert.equal(element('phrase').textContent,'Record English again');
+ assert.match(element('status').textContent,/Voice reset/);
  console.log('Sign-in, language enrollment choices, and provider-detail hiding checks passed.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

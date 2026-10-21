@@ -8,3 +8,5 @@
 .call-icon{display:flex;align-items:center;justify-content:center;flex-shrink:0;width:40px;height:40px;border-radius:12px;background:#ffffff1f;font-size:23px}
 @media(max-width:600px){.call-button{width:100%;padding:12px 18px}}
 @media(prefers-reduced-motion:reduce){.call-button{transition:none}.call-button:hover:not(:disabled){transform:none}}
+
+dialog{max-width:520px;width:calc(100% - 32px);border:1px solid #dde5ea;border-radius:16px;padding:24px;color:#142c3b;box-shadow:0 16px 48px #14334933}dialog::backdrop{background:#142c3b88}

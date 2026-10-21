@@ -69,6 +69,9 @@ class Accounts:
             if "security_phrase_saved" not in columns:
                 db.execute("ALTER TABLE accounts ADD COLUMN security_phrase_saved INTEGER NOT NULL DEFAULT 0")
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS accounts_phone ON accounts(phone)")
+            for table in ('accounts', 'voice_profiles'):
+                if 'generation' not in {row['name'] for row in db.execute(f'PRAGMA table_info({table})')}:
+                    db.execute(f'ALTER TABLE {table} ADD COLUMN generation INTEGER NOT NULL DEFAULT 0')
             session_columns = {row['name'] for row in db.execute('PRAGMA table_info(sessions)')}
             if 'voice' not in session_columns:
                 db.execute('ALTER TABLE sessions ADD COLUMN voice TEXT')
@@ -245,7 +248,7 @@ class Enrollment:
         return {"email": account["email"], "language": account["language"],
                 "phone": account["phone"], "phone_region": account["phone_region"],
                 "accepted": len(audios), "total": len(phrases), "state": account["state"],
-                "phrase": phrases[len(audios)] if len(audios) < len(phrases) else None,
+                "phrase": phrases[len(audios)] if account["state"] == "pending" and len(audios) < len(phrases) else None,
                 "voices": self.accounts.voices(account),
                 "available_languages": [code for code in LANGUAGES if code not in {v['language'] for v in self.accounts.voices(account)}]}
 
@@ -273,9 +276,26 @@ class Enrollment:
         self.accounts.update(account["id"], audios=audios)
         return self.status(self.accounts.get(account["id"]))
 
+    def reset(self, account):
+        self.bound(account)
+        table = self.accounts.profile_table(account)
+        # Persist the disabled state before remote deletion, including on failure
+        # or process interruption. A retry can safely finish the deletion.
+        with self.accounts.connect() as db:
+            db.execute(f"UPDATE {table} SET state='resetting', generation=generation+1 WHERE id=?", (account['id'],))
+        self.providers.reset(account['id'])
+        with self.accounts.connect() as db:
+            db.execute(f"""UPDATE {table} SET audios='[]', state='pending',
+                voiceprint='main', security_phrase_saved=0 WHERE id=?""", (account['id'],))
+            for history in ('voiceprint_samples', 'voiceprint_versions', 'voiceprint_learning_state'):
+                db.execute(f'DELETE FROM {history} WHERE account=?', (account['id'],))
+        return self.status(self.accounts.get(account['id']))
+
     def finish(self, account):
         self.bound(account)
         audios = json.loads(account["audios"])
+        if account["state"] == "resetting":
+            raise EnrollmentError("Retry the voice reset before enrolling again.")
         if len(audios) != 5:
             raise EnrollmentError("Complete all five recordings first.")
         self.providers.finish(account["id"], audios)

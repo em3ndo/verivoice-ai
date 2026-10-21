@@ -31,6 +31,9 @@ class Login(BaseModel):
 class VoiceSelection(BaseModel):
     language: str
 
+class VoiceReset(VoiceSelection):
+    confirmed: bool = False
+
 class Registration(Credentials):
     phone_region: str = Field(min_length=2, max_length=2)
     phone_number: str = Field(min_length=1, max_length=40)
@@ -160,6 +163,18 @@ def create_app(*, settings=None, database=None, providers=None, call_speaker=Non
     def select_voice(body: VoiceSelection, request: Request):
         with lock:
             return enrollment.status(accounts.select_voice(request.cookies.get('vv_session',''),body.language))
+
+    @app.post('/api/voice/reset')
+    async def reset_voice(body: VoiceReset, request: Request):
+        account(request)
+        if body.confirmed is not True:
+            raise EnrollmentError('Confirm that you want to reset this voice.')
+        async with calls.learning.operation_lock:
+            def reset():
+                with lock:
+                    selected = accounts.select_voice(request.cookies.get('vv_session', ''), body.language)
+                    return enrollment.reset(selected)
+            return await run_in_threadpool(reset)
 
     @app.post("/api/logout")
     def logout(request: Request):

@@ -153,7 +153,8 @@ class CallService:
                             return
                         # Recheck session on audio and control messages, including logout.
                         account = self.accounts.authenticate(token)
-                        if not account or account["id"] != uid:
+                        if (not account or account["id"] != uid or
+                                account["generation"] != signed_in["generation"] or account["state"] == "resetting"):
                             raise ValueError("Session ended")
                         pcm = message.get("bytes")
                         if pcm is not None:
@@ -289,7 +290,8 @@ class CallService:
                     while True:
                         await asyncio.sleep(.25)
                         account = self.accounts.authenticate(token)
-                        if not account or account["id"] != uid:
+                        if (not account or account["id"] != uid or
+                                account["generation"] != signed_in["generation"] or account["state"] == "resetting"):
                             raise ValueError("Session ended")
                         notification = state.notification(time.monotonic())
                         if notification:

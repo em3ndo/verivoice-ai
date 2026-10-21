@@ -244,3 +244,26 @@ schema additions preserve existing accounts and profiles. The database is create
 under `data/accounts.sqlite3` on first startup; no separate database server is required.
 Do not delete it to resolve an API outage: doing so loses local accounts and references
 but does not delete corresponding recordings or voiceprints from Hiya.
+
+### Reset a language's voice identity
+
+After signing in, choose **Voice language**, click **Reset selected voice**, then
+choose **No, go back** or **Yes, reset my voice**. A confirmed reset deletes all
+Hiya voiceprint versions and the Hiya identity for that language using its stored
+opaque `vv-…` handle (the handle is not a hash of the voice). It clears the local
+recordings list, adaptive learning history, and `security_phrase_saved` flag, then
+returns to the five-sentence enrollment flow. Other languages and account login
+remain intact. Uploaded audio resources have their own Hiya retention policy;
+this operation deletes identities and voiceprints, not all uploaded audio.
+
+Deletion uses Hiya's documented [voiceprint DELETE](https://developer.hiya.com/docs/audio-intel/endpoints/voiceprints-delete)
+and [identity DELETE](https://developer.hiya.com/docs/audio-intel/endpoints/identities-delete)
+endpoints. If deletion fails or the process stops partway through, the voice stays
+in `resetting` state; choose **Retry selected voice reset** to finish. Missing
+remote resources are safe to retry. Enrollment and calls cannot reuse a partially
+deleted identity. Reset waits for background voiceprint computation to finish,
+and old call results cannot train a newly enrolled voice.
+
+Reset coverage: `python -m unittest discover -s tests -p 'test_*.py'` and
+`node --test tests/*.test.cjs`. Provider tests mock Hiya HTTP responses and never
+delete live account data.
